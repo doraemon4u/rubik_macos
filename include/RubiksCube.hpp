@@ -59,6 +59,11 @@ private:
   static const std::map<std::string, Color> FACE_TO_COLOR;   ///< 面到颜色的映射
   static const std::map<std::string, Vector3> ROTATION_AXES; ///< 面旋转轴定义
 
+  std::vector<std::pair<Vector3, bool>> history; // 存储历史旋转
+
+  void rotateFaceInternal(const std::string &actualFace, bool clockwise,
+                          bool recordHistory);
+
   /**
    * @brief 创建所有魔方块（27个）
    */
@@ -193,6 +198,8 @@ public:
    * @param moves 打乱步数，默认为20
    */
   void scramble(int moves = 20);
+
+  void undo();
 };
 
 #endif

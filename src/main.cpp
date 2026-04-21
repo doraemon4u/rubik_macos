@@ -139,6 +139,8 @@ int main() {
         cube.rotateViewDirection("D", true);
       } else if (ch == 'D') {
         cube.rotateViewDirection("D", false);
+      } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
+        cube.undo();
       }
 
       int width, height;

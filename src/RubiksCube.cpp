@@ -2,6 +2,7 @@
 #include "Enums.hpp"
 #include <algorithm>
 #include <chrono>
+#include <curses.h>
 #include <functional>
 #include <random>
 
@@ -160,20 +161,7 @@ void RubiksCube::rotateViewDirection(const std::string &viewDirection,
   std::string actualFace = it->second;
   completeAnimation();
 
-  animating = true;
-  animationProgress = 0.0f;
-  animationStartTime = std::chrono::steady_clock::now();
-
-  auto axesIt = ROTATION_AXES.find(actualFace);
-  if (axesIt == ROTATION_AXES.end()) {
-    return;
-  }
-
-  Vector3 axis = axesIt->second;
-  currentAnimation = std::make_tuple(axis, actualFace, clockwise);
-  animationPieces = getPiecesOnFace(actualFace);
-  animationRotation = Quaternion::fromAxisAngle(
-      axis, clockwise ? ROTATION_ANGLE : -ROTATION_ANGLE);
+  rotateFaceInternal(actualFace, clockwise, true);
 }
 
 void RubiksCube::updateAnimation() {
@@ -628,6 +616,8 @@ void RubiksCube::reset() {
 
   viewMapping = {{"F", "F"}, {"B", "B"}, {"L", "L"},
                  {"R", "R"}, {"U", "U"}, {"D", "D"}};
+
+  history.clear();
 }
 
 void RubiksCube::scramble(int moves) {
@@ -667,4 +657,53 @@ void RubiksCube::scramble(int moves) {
   currentAnimation = std::make_tuple(Vector3(), "", false);
   animationPieces.clear();
   animationRotation = Quaternion(1, 0, 0, 0);
+  history.clear();
+}
+
+void RubiksCube::rotateFaceInternal(const std::string &actualFace,
+                                    bool clockwise, bool recordHistory) {
+  auto axesIt = ROTATION_AXES.find(actualFace);
+  if (axesIt == ROTATION_AXES.end())
+    return;
+
+  Vector3 axis = axesIt->second;
+
+  // 如果要求记录历史，则将逆操作压入栈
+  if (recordHistory) {
+    history.push_back({axis, !clockwise});
+  }
+
+  animating = true;
+  animationProgress = 0.0f;
+  animationStartTime = std::chrono::steady_clock::now();
+  currentAnimation = std::make_tuple(axis, actualFace, clockwise);
+  animationPieces = getPiecesOnFace(actualFace);
+  animationRotation = Quaternion::fromAxisAngle(
+      axis, clockwise ? ROTATION_ANGLE : -ROTATION_ANGLE);
+}
+
+void RubiksCube::undo() {
+  if (history.empty())
+    return;
+
+  // 完成当前动画，避免冲突
+  completeAnimation();
+
+  // 取出最后一次旋转的逆操作
+  auto [axis, clockwise] = history.back();
+  history.pop_back();
+
+  // 根据轴找出面对应的字符串（用于获取面上的块）
+  std::string actualFace;
+  for (const auto &[face, ax] : ROTATION_AXES) {
+    if ((ax - axis).length() < 0.1f) {
+      actualFace = face;
+      break;
+    }
+  }
+  if (actualFace.empty())
+    return;
+
+  // 执行逆旋转，不记录历史（避免循环）
+  rotateFaceInternal(actualFace, clockwise, false);
 }
