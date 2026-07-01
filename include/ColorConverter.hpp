@@ -1,7 +1,17 @@
 #ifndef COLOR_CONVERTER_HPP
 #define COLOR_CONVERTER_HPP
 
+#include <cmath>
 #include <cstdint>
+
+/**
+ * @struct HSL
+ * @brief HSL 颜色空间（色相/饱和度/明度），用于不损失色相的着色
+ */
+struct HSL {
+  float h, s, l; ///< h∈[0,1], s∈[0,1], l∈[0,1]
+  HSL(float h = 0, float s = 0, float l = 0) : h(h), s(s), l(l) {}
+};
 
 /**
  * @struct RGB
@@ -19,11 +29,31 @@ struct RGB {
   RGB(uint8_t r = 0, uint8_t g = 0, uint8_t b = 0) : r(r), g(g), b(b) {}
 
   /**
-   * @brief 应用亮度调整
-   * @param brightness 亮度因子（0.1-1.5）
-   * @return 调整后的RGB颜色
+   * @brief 整体乘以标量（用于光照计算）
    */
-  RGB applyBrightness(float brightness) const;
+  RGB multiply(float factor) const;
+
+  /**
+   * @brief 与另一RGB值相加（饱和到255）
+   */
+  RGB add(const RGB &other) const;
+
+  /**
+   * @brief 将 RGB 转换为 HSL 颜色空间
+   */
+  HSL toHSL() const;
+
+  /**
+   * @brief 从 HSL 颜色空间构造 RGB
+   */
+  static RGB fromHSL(const HSL &hsl);
+
+  /**
+   * @brief 在 HSL 空间中按因子调整明度，保留色相和饱和度
+   * @param lightFactor 明度缩放因子（0=全黑, 0.25=暗, 1=原色, >1=过曝白）
+   * @return 着色后的 RGB
+   */
+  RGB shadeInHSL(float lightFactor) const;
 
   /**
    * @brief 将RGB颜色转换为256色终端颜色索引
@@ -38,14 +68,6 @@ struct RGB {
  */
 class ColorConverter {
 public:
-  /**
-   * @brief 应用亮度调整到RGB颜色
-   * @param rgb 原始RGB颜色
-   * @param brightness 亮度因子
-   * @return 调整后的RGB颜色
-   */
-  static RGB applyBrightness(const RGB &rgb, float brightness);
-
   /**
    * @brief 将RGB颜色转换为256色终端颜色索引
    * @param rgb RGB颜色

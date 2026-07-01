@@ -2,11 +2,16 @@
 #include "Enums.hpp"
 #include <algorithm>
 #include <chrono>
+#ifdef _WIN32
+#define PDC_NCMOUSE
+#include <pdcurses.h>
+#else
 #include <curses.h>
+#endif
 #include <functional>
 #include <random>
+#include <unordered_map>
 
-// Static constants initialization
 const std::vector<RGB> RubiksCube::COLOR_RGB = {
     RGB(220, 60, 60),   // Red
     RGB(220, 120, 0),   // Orange
@@ -38,17 +43,14 @@ const std::map<std::string, Vector3> RubiksCube::ROTATION_AXES = {
 RubiksCube::RubiksCube()
     : rotation(1, 0, 0, 0), scale(25.0f), position(0, 0, 10), aspectRatio(2.0f),
       cameraPosition(0, 0, 0), focalLength(8.0f), animating(false),
-      animationProgress(0.0f) {
+      animationProgress(0.0f), dirty(true) {
 
-  // Initialize light direction
   lightDir = Vector3(0.3f, 0.5f, -0.8f).normalized();
 
-  // Initialize view directions
   viewDirections = {{"F", Vector3(0, 0, -1)}, {"B", Vector3(0, 0, 1)},
                     {"L", Vector3(-1, 0, 0)}, {"R", Vector3(1, 0, 0)},
                     {"U", Vector3(0, 1, 0)},  {"D", Vector3(0, -1, 0)}};
 
-  // Initialize view mapping
   viewMapping = {{"F", "F"}, {"B", "B"}, {"L", "L"},
                  {"R", "R"}, {"U", "U"}, {"D", "D"}};
 
@@ -56,7 +58,6 @@ RubiksCube::RubiksCube()
 }
 
 void RubiksCube::createPieces() {
-  // Create corner pieces (8)
   for (float x : {-1.0f, 1.0f}) {
     for (float y : {-1.0f, 1.0f}) {
       for (float z : {-1.0f, 1.0f}) {
@@ -66,7 +67,6 @@ void RubiksCube::createPieces() {
     }
   }
 
-  // Create edge pieces (12)
   for (float y : {-1.0f, 1.0f}) {
     for (float z : {-1.0f, 1.0f}) {
       pieces.push_back(
@@ -88,7 +88,6 @@ void RubiksCube::createPieces() {
     }
   }
 
-  // Create center pieces (6)
   std::vector<Vector3> centerPositions = {
       Vector3(-1, 0, 0), // Blue center
       Vector3(1, 0, 0),  // Green center
@@ -104,29 +103,45 @@ void RubiksCube::createPieces() {
 }
 
 void RubiksCube::updateViewMapping() {
+  Quaternion invRotation = rotation.conjugate();
+
+  static const std::map<std::string, Vector3> FACE_NORMALS = {
+      {"F", Vector3(0, 0, -1)}, {"B", Vector3(0, 0, 1)},
+      {"L", Vector3(-1, 0, 0)}, {"R", Vector3(1, 0, 0)},
+      {"U", Vector3(0, 1, 0)},  {"D", Vector3(0, -1, 0)}};
+
+  struct Match {
+    std::string viewDir;
+    std::string faceName;
+    float dot;
+  };
+  std::vector<Match> matches;
+
   for (const auto &[viewDirName, viewDir] : viewDirections) {
-    std::string bestFace;
-    float bestDot = -1.0f;
-
-    Quaternion invRotation(rotation.w, -rotation.x, -rotation.y, -rotation.z);
     Vector3 dirInCubeSpace = invRotation.rotateVector(viewDir);
-
-    static const std::map<std::string, Vector3> FACE_NORMALS = {
-        {"F", Vector3(0, 0, -1)}, {"B", Vector3(0, 0, 1)},
-        {"L", Vector3(-1, 0, 0)}, {"R", Vector3(1, 0, 0)},
-        {"U", Vector3(0, 1, 0)},  {"D", Vector3(0, -1, 0)}};
-
     for (const auto &[faceName, faceNormalVec] : FACE_NORMALS) {
       float dot = dirInCubeSpace.dot(faceNormalVec);
-      if (dot > bestDot) {
-        bestDot = dot;
-        bestFace = faceName;
-      }
+      matches.push_back({viewDirName, faceName, dot});
     }
+  }
 
-    if (!bestFace.empty() && bestDot > 0.5f) {
-      viewMapping[viewDirName] = bestFace;
-    }
+  std::sort(matches.begin(), matches.end(),
+            [](const Match &a, const Match &b) { return a.dot > b.dot; });
+
+  std::vector<std::string> assignedViews;
+  std::vector<std::string> assignedFaces;
+
+  for (const auto &match : matches) {
+    if (std::find(assignedViews.begin(), assignedViews.end(), match.viewDir) !=
+        assignedViews.end())
+      continue;
+    if (std::find(assignedFaces.begin(), assignedFaces.end(), match.faceName) !=
+        assignedFaces.end())
+      continue;
+
+    viewMapping[match.viewDir] = match.faceName;
+    assignedViews.push_back(match.viewDir);
+    assignedFaces.push_back(match.faceName);
   }
 }
 
@@ -137,6 +152,7 @@ void RubiksCube::rotateByMouseDelta(float dx, float dy) {
         Quaternion::fromAxisAngle(Vector3(0, 1, 0), -dx * rotateSpeed);
     rotation = rotY.multiply(rotation).normalize();
     updateViewMapping();
+    dirty = true;
   }
 
   if (dy != 0) {
@@ -144,11 +160,13 @@ void RubiksCube::rotateByMouseDelta(float dx, float dy) {
         Quaternion::fromAxisAngle(Vector3(1, 0, 0), -dy * rotateSpeed);
     rotation = rotX.multiply(rotation).normalize();
     updateViewMapping();
+    dirty = true;
   }
 }
 
 void RubiksCube::zoom(float factor) {
   scale = std::max(15.0f, std::min(50.0f, scale + factor * 0.5f));
+  dirty = true;
 }
 
 void RubiksCube::rotateViewDirection(const std::string &viewDirection,
@@ -253,13 +271,19 @@ Vector3 RubiksCube::getPiecePosition(
 Color RubiksCube::getPieceFaceColor(
     const std::shared_ptr<RubiksCubePiece> &piece,
     const std::string &faceName) const {
-  // 无论是否动画，颜色由块自身决定，不随旋转改变
   return piece->getCurrentFaceColor(faceName);
 }
 
 std::vector<Vector3>
 RubiksCube::getPieceFaceCorners(const std::shared_ptr<RubiksCubePiece> &piece,
                                 const std::string &faceName) const {
+  return getPieceFaceCorners(piece, faceName, getPiecePosition(piece));
+}
+
+std::vector<Vector3>
+RubiksCube::getPieceFaceCorners(const std::shared_ptr<RubiksCubePiece> &piece,
+                                const std::string &faceName,
+                                const Vector3 &piecePos) const {
   auto corners = piece->getFaceCorners(faceName);
 
   if (animating && std::find(animationPieces.begin(), animationPieces.end(),
@@ -270,14 +294,15 @@ RubiksCube::getPieceFaceCorners(const std::shared_ptr<RubiksCubePiece> &piece,
     Quaternion partialRotation = Quaternion::fromAxisAngle(axis, partialAngle);
 
     std::vector<Vector3> rotatedCorners;
+    rotatedCorners.reserve(corners.size());
     for (const auto &corner : corners) {
       rotatedCorners.push_back(partialRotation.rotateVector(corner));
     }
     corners = rotatedCorners;
   }
 
-  Vector3 piecePos = getPiecePosition(piece);
   std::vector<Vector3> worldCorners;
+  worldCorners.reserve(corners.size());
   for (const auto &corner : corners) {
     worldCorners.push_back(corner + piecePos);
   }
@@ -285,17 +310,10 @@ RubiksCube::getPieceFaceCorners(const std::shared_ptr<RubiksCubePiece> &piece,
   return worldCorners;
 }
 
-float RubiksCube::calculateBrightness(const Vector3 &normal) const {
-  float dot = normal.dot(lightDir);
-  float ambient = 0.7f;
-  float diffuse = std::max(0.0f, dot) * 0.7f;
-  float brightness = ambient + diffuse;
-
-  if (dot > 0.8f) {
-    brightness = std::min(1.2f, brightness + 0.2f);
-  }
-
-  return std::max(0.25f, std::min(1.2f, brightness));
+RGB RubiksCube::calculateShadedColor(const RGB &baseColor,
+                                     const Vector3 &normal,
+                                     const Vector3 &worldPos) const {
+  return baseColor;
 }
 
 std::tuple<int, int, float>
@@ -325,183 +343,228 @@ void RubiksCube::drawPolygon(WINDOW *win,
   if (points.size() < 3)
     return;
 
-  // Get window dimensions
   int maxY, maxX;
   getmaxyx(win, maxY, maxX);
 
-  // 简单填充算法：扫描线填充
-  if (points.size() >= 3) {
-    // 找到多边形的y范围
-    int minY = maxY, maxYVal = 0;
-    for (const auto &p : points) {
-      if (p.second < minY)
-        minY = p.second;
-      if (p.second > maxYVal)
-        maxYVal = p.second;
-    }
+  int minY = maxY, maxYVal = 0;
+  for (const auto &p : points) {
+    if (p.second < minY)
+      minY = p.second;
+    if (p.second > maxYVal)
+      maxYVal = p.second;
+  }
+  minY = std::max(0, minY);
+  maxYVal = std::min(maxY - 1, maxYVal);
 
-    // 限制在窗口范围内
-    minY = std::max(0, minY);
-    maxYVal = std::min(maxY - 1, maxYVal);
+  static thread_local std::vector<int> intersections;
 
-    // 对每条扫描线计算交点
-    for (int y = minY; y <= maxYVal; y++) {
-      std::vector<int> intersections;
+  const attr_t attr = colorPair > 0 ? COLOR_PAIR(colorPair) : A_NORMAL;
+  if (colorPair > 0)
+    wattron(win, attr);
 
-      for (size_t i = 0; i < points.size(); i++) {
-        size_t j = (i + 1) % points.size();
-        int y1 = points[i].second;
-        int y2 = points[j].second;
-        int x1 = points[i].first;
-        int x2 = points[j].first;
+  for (int y = minY; y <= maxYVal; y++) {
+    intersections.clear();
 
-        if ((y1 <= y && y2 > y) || (y2 <= y && y1 > y)) {
-          // 计算交点
-          float t = static_cast<float>(y - y1) / (y2 - y1);
-          int intersectX = static_cast<int>(x1 + t * (x2 - x1));
-          intersections.push_back(intersectX);
-        }
-      }
+    for (size_t i = 0; i < points.size(); i++) {
+      size_t j = (i + 1) % points.size();
+      int y1 = points[i].second, y2 = points[j].second;
+      int x1 = points[i].first, x2 = points[j].first;
 
-      // 排序交点
-      std::sort(intersections.begin(), intersections.end());
-
-      // 填充扫描线
-      for (size_t i = 0; i < intersections.size(); i += 2) {
-        if (i + 1 >= intersections.size())
-          break;
-
-        int startX = std::max(0, intersections[i]);
-        int endX = std::min(maxX - 1, intersections[i + 1]);
-
-        for (int x = startX; x <= endX; x++) {
-          if (y >= 0 && y < maxY && x >= 0 && x < maxX) {
-            if (colorPair > 0) {
-              wattron(win, COLOR_PAIR(colorPair));
-              mvwaddch(win, y, x, colorChar);
-              wattroff(win, COLOR_PAIR(colorPair));
-            } else {
-              mvwaddch(win, y, x, colorChar);
-            }
-          }
-        }
+      if ((y1 <= y && y2 > y) || (y2 <= y && y1 > y)) {
+        float t = static_cast<float>(y - y1) / (y2 - y1);
+        intersections.push_back(static_cast<int>(x1 + t * (x2 - x1)));
       }
     }
+
+    std::sort(intersections.begin(), intersections.end());
+
+    for (size_t i = 0; i + 1 < intersections.size(); i += 2) {
+      int startX = std::max(0, intersections[i]);
+      int endX = std::min(maxX - 1, intersections[i + 1]);
+      int len = endX - startX + 1;
+      if (len > 0) {
+        mvwhline(win, y, startX, colorChar, len);
+      }
+    }
+  }
+
+  if (colorPair > 0)
+    wattroff(win, attr);
+}
+
+void RubiksCube::drawPolygonEdges(
+    WINDOW *win, const std::vector<std::pair<int, int>> &points) {
+  if (points.size() < 2)
+    return;
+
+  int maxY, maxX;
+  getmaxyx(win, maxY, maxX);
+
+  auto drawLine = [&](int x0, int y0, int x1, int y1) {
+    if (y0 == y1) {
+      if (y0 < 0 || y0 >= maxY)
+        return;
+      int lx = std::max(0, std::min(x0, x1));
+      int rx = std::min(maxX - 1, std::max(x0, x1));
+      if (rx >= lx)
+        mvwhline(win, y0, lx, ' ', rx - lx + 1);
+      return;
+    }
+
+    int dx = std::abs(x1 - x0);
+    int dy = -std::abs(y1 - y0);
+    int sx = x0 < x1 ? 1 : -1;
+    int sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+
+    int curY = y0;
+    int rowMin = x0, rowMax = x0;
+
+    auto flushRow = [&]() {
+      if (curY >= 0 && curY < maxY) {
+        int lx = std::max(0, std::min(rowMin, rowMax));
+        int rx = std::min(maxX - 1, std::max(rowMin, rowMax));
+        if (rx >= lx)
+          mvwhline(win, curY, lx, ' ', rx - lx + 1);
+      }
+    };
+
+    while (true) {
+      if (y0 != curY) {
+        flushRow();
+        curY = y0;
+        rowMin = rowMax = x0;
+      } else {
+        rowMin = std::min(rowMin, x0);
+        rowMax = std::max(rowMax, x0);
+      }
+      if (x0 == x1 && y0 == y1)
+        break;
+      int e2 = 2 * err;
+      if (e2 >= dy) {
+        err += dy;
+        x0 += sx;
+      }
+      if (e2 <= dx) {
+        err += dx;
+        y0 += sy;
+      }
+    }
+    flushRow();
+  };
+
+  for (size_t i = 0; i < points.size(); i++) {
+    size_t j = (i + 1) % points.size();
+    drawLine(points[i].first, points[i].second, points[j].first,
+             points[j].second);
   }
 }
 
 void RubiksCube::draw(WINDOW *win, int width, int height,
-                      std::map<int, int> &colorCache) {
-  werase(win);
+                      std::unordered_map<int, int> &colorCache) {
+  bool wasAnimating = animating;
   updateAnimation();
 
-  // 定义要绘制的面片数据结构
+  if (wasAnimating && !animating)
+    dirty = true;
+
+  if (!animating && !dirty)
+    return;
+
+  werase(win);
+
   struct FaceData {
-    std::vector<std::pair<int, int>> points; // 屏幕上的多边形顶点
-    int colorPair;                           // ncurses 颜色对编号
-    float depth;                             // 深度（用于排序）
-    char colorChar;                          // 填充字符
+    std::vector<std::pair<int, int>> points;
+    int colorPair;
+    float depthSq;
+    char colorChar;
   };
 
-  std::vector<FaceData> facesToDraw;
+  static thread_local std::vector<FaceData> facesToDraw;
+  facesToDraw.clear();
 
   static const std::vector<std::string> FACE_NAMES = {"F", "B", "L",
                                                       "R", "U", "D"};
 
   for (const auto &piece : pieces) {
-    // 获取块的当前位置（考虑动画）
     Vector3 piecePos = getPiecePosition(piece);
 
     for (const auto &faceName : FACE_NAMES) {
-      // 获取该面在块上的颜色（直接查表，不依赖旋转）
       Color colorIdx = piece->getCurrentFaceColor(faceName);
       if (colorIdx == _COLOR_NONE)
         continue;
 
-      // 获取该面在世界坐标系中的角点
-      auto corners = getPieceFaceCorners(piece, faceName);
+      auto corners = getPieceFaceCorners(piece, faceName, piecePos);
       if (corners.size() < 3)
         continue;
 
-      // 计算面中心（用于深度排序）
       Vector3 center(0, 0, 0);
-      for (const auto &corner : corners) {
+      for (const auto &corner : corners)
         center = center + corner;
-      }
       center = center * (1.0f / corners.size());
 
-      // 将中心旋转到世界坐标系（考虑魔方整体旋转）
       Vector3 rotatedCenter = rotation.rotateVector(center);
       Vector3 worldCenter = rotatedCenter + position;
 
-      // 计算面法线（原始法线，需旋转到世界坐标系）
       Vector3 v1 = corners[1] - corners[0];
       Vector3 v2 = corners[2] - corners[0];
       Vector3 normal = v1.cross(v2).normalized();
       Vector3 normalWorld = rotation.rotateVector(normal);
+      Vector3 viewDir = cameraPosition - worldCenter;
+      if (normalWorld.dot(viewDir) <= 0)
+        continue;
 
-      // 背面剔除：检查法线是否朝向相机
-      Vector3 viewDir = cameraPosition - worldCenter; // 从面指向相机
-      if (normalWorld.dot(viewDir) <= 0) {
-        continue; // 背面，跳过
-      }
-
-      // 计算亮度
-      float brightness = calculateBrightness(normalWorld);
-
-      // 获取基础颜色并应用亮度
       int colorIndexInt = static_cast<int>(colorIdx);
       if (colorIndexInt < 0 ||
-          colorIndexInt >= static_cast<int>(COLOR_RGB.size())) {
-        continue; // 防御性检查
-      }
-      RGB baseColor = COLOR_RGB[colorIndexInt];
-      RGB shadedColor = baseColor.applyBrightness(brightness);
+          colorIndexInt >= static_cast<int>(COLOR_RGB.size()))
+        continue;
 
-      // 转换为终端256色索引并初始化颜色对
-      int terminalColorIndex = shadedColor.to256Color();
+      RGB baseColor = COLOR_RGB[colorIndexInt];
+      RGB shadedColor =
+          calculateShadedColor(baseColor, normalWorld, worldCenter);
+      int termIdx = shadedColor.to256Color();
+
       int colorPair;
-      auto it = colorCache.find(terminalColorIndex);
+      auto it = colorCache.find(termIdx);
       if (it != colorCache.end()) {
         colorPair = it->second;
       } else {
         colorPair = static_cast<int>(colorCache.size()) + 1;
-        init_pair(colorPair, terminalColorIndex, COLOR_BLACK);
-        colorCache[terminalColorIndex] = colorPair;
+        init_pair(colorPair, termIdx, COLOR_BLACK);
+        colorCache[termIdx] = colorPair;
       }
 
-      // 将3D角点投影到2D屏幕
       std::vector<std::pair<int, int>> screenPoints;
-      for (const auto &corner3d : corners) {
-        auto [x, y, _] = projectPoint(corner3d, width, height);
-        screenPoints.emplace_back(x, y);
+      screenPoints.reserve(corners.size());
+      for (const auto &c : corners) {
+        auto [sx, sy, _] = projectPoint(c, width, height);
+        screenPoints.emplace_back(sx, sy);
       }
 
-      // 获取显示字符
-      if (colorIndexInt >= 0 &&
-          colorIndexInt < static_cast<int>(COLOR_CHARS.size())) {
-        char colorChar = COLOR_CHARS[colorIndexInt];
-        float depth = (worldCenter - cameraPosition).length();
-        facesToDraw.push_back({screenPoints, colorPair, depth, colorChar});
-      }
+      char colorChar = COLOR_CHARS[colorIndexInt];
+      Vector3 rel = worldCenter - cameraPosition;
+      float depthSq = rel.x * rel.x + rel.y * rel.y + rel.z * rel.z;
+      facesToDraw.push_back(
+          {std::move(screenPoints), colorPair, depthSq, colorChar});
     }
   }
 
-  // 按深度从远到近排序（画家算法）
-  std::sort(
-      facesToDraw.begin(), facesToDraw.end(),
-      [](const FaceData &a, const FaceData &b) { return a.depth > b.depth; });
+  std::sort(facesToDraw.begin(), facesToDraw.end(),
+            [](const FaceData &a, const FaceData &b) {
+              return a.depthSq > b.depthSq;
+            });
 
-  // 绘制所有面
   for (const auto &face : facesToDraw) {
     drawPolygon(win, face.points, face.colorPair, face.colorChar);
+    drawPolygonEdges(win, face.points);
   }
 
-  // 绘制UI
-  drawUI(win, width, height);
+  dirty = false;
+  drawUI(win, width, height, colorCache);
 }
 
-void RubiksCube::drawUI(WINDOW *win, int width, int height) {
+void RubiksCube::drawUI(WINDOW *win, int width, int height,
+                        std::unordered_map<int, int> &colorCache) {
   std::string title = "3x3 Rubik's Cube";
   if (width >= static_cast<int>(title.length())) {
     mvwprintw(win, 0, (width - title.length()) / 2, "%s", title.c_str());
@@ -509,7 +572,20 @@ void RubiksCube::drawUI(WINDOW *win, int width, int height) {
 
   updateViewMapping();
 
-  // 安全地获取颜色名称
+  auto getFaceColorIndex = [this](const std::string &face) -> int {
+    try {
+      auto viewIt = viewMapping.find(face);
+      if (viewIt != viewMapping.end()) {
+        auto colorIt = FACE_TO_COLOR.find(viewIt->second);
+        if (colorIt != FACE_TO_COLOR.end()) {
+          return static_cast<int>(colorIt->second);
+        }
+      }
+    } catch (...) {
+    }
+    return -1;
+  };
+
   auto getColorName = [this](const std::string &face) -> std::string {
     try {
       auto viewIt = viewMapping.find(face);
@@ -524,9 +600,22 @@ void RubiksCube::drawUI(WINDOW *win, int width, int height) {
         }
       }
     } catch (...) {
-      // 忽略异常
     }
     return "Unknown";
+  };
+
+  auto getOrCreateColorPair = [&](int colorIndex) -> int {
+    if (colorIndex < 0 || colorIndex >= static_cast<int>(COLOR_RGB.size()))
+      return 0;
+    const RGB &rgb = COLOR_RGB[colorIndex];
+    int termIdx = rgb.to256Color();
+    auto it = colorCache.find(termIdx);
+    if (it != colorCache.end())
+      return it->second;
+    int pair = static_cast<int>(colorCache.size()) + 1;
+    init_pair(pair, termIdx, COLOR_BLACK);
+    colorCache[termIdx] = pair;
+    return pair;
   };
 
   std::vector<std::string> controls = {
@@ -546,6 +635,7 @@ void RubiksCube::drawUI(WINDOW *win, int width, int height) {
       "  d - Down clockwise   D - Down counter",
       "",
       "Current view mapping:",
+
       "  Front(F) -> " + getColorName("F") + " face",
       "  Back(B)  -> " + getColorName("B") + " face",
       "  Left(L)  -> " + getColorName("L") + " face",
@@ -555,6 +645,16 @@ void RubiksCube::drawUI(WINDOW *win, int width, int height) {
       "",
       "Scale: " + std::to_string(static_cast<int>(scale)),
       "Animation: " + std::string(animating ? "Active" : "None")};
+
+  static const int VIEW_MAP_START = 16;
+  static const int VIEW_MAP_END = 21;
+
+  static const std::vector<std::string> VIEW_ORDER = {"F", "B", "L",
+                                                      "R", "U", "D"};
+
+  static const std::vector<std::string> VIEW_PREFIXES = {
+      "  Front(F) -> ", "  Back(B)  -> ", "  Left(L)  -> ",
+      "  Right(R) -> ", "  Up(U)    -> ", "  Down(D)  -> "};
 
   int boxWidth = 0;
   for (const auto &line : controls) {
@@ -568,7 +668,6 @@ void RubiksCube::drawUI(WINDOW *win, int width, int height) {
 
   if (boxX > 0 && boxY > 0 && boxX + boxWidth < width &&
       boxY + boxHeight < height) {
-    // Draw box border
     mvwaddch(win, boxY, boxX, '+');
     mvwaddch(win, boxY, boxX + boxWidth - 1, '+');
     mvwaddch(win, boxY + boxHeight - 1, boxX, '+');
@@ -584,10 +683,35 @@ void RubiksCube::drawUI(WINDOW *win, int width, int height) {
       mvwaddch(win, y, boxX + boxWidth - 1, '|');
     }
 
-    // Draw text
     for (size_t i = 0; i < controls.size(); i++) {
-      mvwprintw(win, boxY + 1 + static_cast<int>(i), boxX + 2, "%s",
-                controls[i].c_str());
+      int row = boxY + 1 + static_cast<int>(i);
+      int col = boxX + 2;
+
+      if (static_cast<int>(i) >= VIEW_MAP_START &&
+          static_cast<int>(i) <= VIEW_MAP_END) {
+        int viewIdx = static_cast<int>(i) - VIEW_MAP_START;
+        const std::string &face = VIEW_ORDER[viewIdx];
+        const std::string &prefix = VIEW_PREFIXES[viewIdx];
+        std::string colorName = getColorName(face);
+        int colorIdx = getFaceColorIndex(face);
+        int colorPair = getOrCreateColorPair(colorIdx);
+
+        mvwprintw(win, row, col, "%s", prefix.c_str());
+
+        int nameCol = col + static_cast<int>(prefix.length());
+        if (colorPair > 0) {
+          wattron(win, COLOR_PAIR(colorPair) | A_BOLD);
+          mvwprintw(win, row, nameCol, "%s", colorName.c_str());
+          wattroff(win, COLOR_PAIR(colorPair) | A_BOLD);
+        } else {
+          mvwprintw(win, row, nameCol, "%s", colorName.c_str());
+        }
+
+        int suffixCol = nameCol + static_cast<int>(colorName.length());
+        mvwprintw(win, row, suffixCol, " face");
+      } else {
+        mvwprintw(win, row, col, "%s", controls[i].c_str());
+      }
     }
   }
 
@@ -605,19 +729,14 @@ void RubiksCube::reset() {
     piece->reset();
   }
 
-  rotation = Quaternion(1, 0, 0, 0);
-  scale = 25.0f;
-  position = Vector3(0, 0, 10);
   animating = false;
   animationProgress = 0.0f;
   currentAnimation = std::make_tuple(Vector3(), "", false);
   animationPieces.clear();
   animationRotation = Quaternion(1, 0, 0, 0);
 
-  viewMapping = {{"F", "F"}, {"B", "B"}, {"L", "L"},
-                 {"R", "R"}, {"U", "U"}, {"D", "D"}};
-
   history.clear();
+  dirty = true;
 }
 
 void RubiksCube::scramble(int moves) {
@@ -658,6 +777,7 @@ void RubiksCube::scramble(int moves) {
   animationPieces.clear();
   animationRotation = Quaternion(1, 0, 0, 0);
   history.clear();
+  dirty = true;
 }
 
 void RubiksCube::rotateFaceInternal(const std::string &actualFace,
@@ -668,7 +788,6 @@ void RubiksCube::rotateFaceInternal(const std::string &actualFace,
 
   Vector3 axis = axesIt->second;
 
-  // 如果要求记录历史，则将逆操作压入栈
   if (recordHistory) {
     history.push_back({axis, !clockwise});
   }
@@ -680,20 +799,18 @@ void RubiksCube::rotateFaceInternal(const std::string &actualFace,
   animationPieces = getPiecesOnFace(actualFace);
   animationRotation = Quaternion::fromAxisAngle(
       axis, clockwise ? ROTATION_ANGLE : -ROTATION_ANGLE);
+  dirty = true;
 }
 
 void RubiksCube::undo() {
   if (history.empty())
     return;
 
-  // 完成当前动画，避免冲突
   completeAnimation();
 
-  // 取出最后一次旋转的逆操作
   auto [axis, clockwise] = history.back();
   history.pop_back();
 
-  // 根据轴找出面对应的字符串（用于获取面上的块）
   std::string actualFace;
   for (const auto &[face, ax] : ROTATION_AXES) {
     if ((ax - axis).length() < 0.1f) {
@@ -704,6 +821,5 @@ void RubiksCube::undo() {
   if (actualFace.empty())
     return;
 
-  // 执行逆旋转，不记录历史（避免循环）
   rotateFaceInternal(actualFace, clockwise, false);
 }

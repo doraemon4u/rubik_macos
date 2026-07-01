@@ -2,14 +2,16 @@
 #define RUBIKSCUBE_HPP
 
 #include "ColorConverter.hpp"
-#include "Enums.hpp" // 包含枚举定义
+#include "Enums.hpp"
 #include "RubiksCubePiece.hpp"
 #include <chrono>
 #include <map>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 #ifdef _WIN32
+#define PDC_NCMOUSE
 #include <pdcurses.h>
 #else
 #include <curses.h>
@@ -35,6 +37,7 @@ private:
   // Animation
   bool animating;          ///< 是否正在进行动画
   float animationProgress; ///< 动画进度（0-1）
+  bool dirty;              ///< 脏标记：状态变化时设为 true，渲染后清除
   std::tuple<Vector3, std::string, bool>
       currentAnimation; ///< 当前动画信息（轴，面，方向）
   std::chrono::steady_clock::time_point animationStartTime; ///< 动画开始时间
@@ -114,11 +117,22 @@ private:
                       const std::string &faceName) const;
 
   /**
-   * @brief 根据法线计算亮度
-   * @param normal 面法线
-   * @return 亮度值（0.25-1.2）
+   * @brief 获取块指定面的角点（传入已计算好的 piece 位置，避免重复计算）
    */
-  float calculateBrightness(const Vector3 &normal) const;
+  std::vector<Vector3>
+  getPieceFaceCorners(const std::shared_ptr<RubiksCubePiece> &piece,
+                      const std::string &faceName,
+                      const Vector3 &piecePos) const;
+
+  /**
+   * @brief 返回面的显示颜色（当前直接返回基色，不做光影处理）
+   * @param baseColor 基础颜色
+   * @param normal 面法线（世界空间，未使用）
+   * @param worldPos 面中心世界坐标（未使用）
+   * @return baseColor 原样返回
+   */
+  RGB calculateShadedColor(const RGB &baseColor, const Vector3 &normal,
+                           const Vector3 &worldPos) const;
 
   /**
    * @brief 将3D点投影到2D屏幕
@@ -141,12 +155,20 @@ private:
                    int colorPair, char colorChar);
 
   /**
+   * @brief 在多边形的边上绘制黑线（模拟 Rubik's cube 贴纸边框）
+   */
+  void drawPolygonEdges(WINDOW *win,
+                        const std::vector<std::pair<int, int>> &points);
+
+  /**
    * @brief 绘制用户界面（控制说明和状态信息）
    * @param win ncurses窗口指针
    * @param width 窗口宽度
    * @param height 窗口高度
+   * @param colorCache 颜色缓存（用于给面颜色名称上色）
    */
-  void drawUI(WINDOW *win, int width, int height);
+  void drawUI(WINDOW *win, int width, int height,
+              std::unordered_map<int, int> &colorCache);
 
 public:
   /**
@@ -186,7 +208,8 @@ public:
    * @param height 窗口高度
    * @param colorCache 颜色缓存，避免重复初始化颜色对
    */
-  void draw(WINDOW *win, int width, int height, std::map<int, int> &colorCache);
+  void draw(WINDOW *win, int width, int height,
+            std::unordered_map<int, int> &colorCache);
 
   /**
    * @brief 重置魔方到初始状态（已解决状态）
@@ -200,6 +223,16 @@ public:
   void scramble(int moves = 20);
 
   void undo();
+
+  /**
+   * @brief 检查是否需要重绘
+   */
+  bool needsRedraw() const { return dirty || animating; }
+
+  /**
+   * @brief 清除脏标记（渲染完成后调用）
+   */
+  void clearDirty() { dirty = false; }
 };
 
 #endif

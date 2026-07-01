@@ -2,7 +2,6 @@
 #include <map>
 #include <sstream>
 
-// Face normals (pointing outward)
 static const std::map<std::string, Vector3> FACE_NORMALS = {
     {"F", Vector3(0, 0, 1)},  {"B", Vector3(0, 0, -1)},
     {"L", Vector3(-1, 0, 0)}, {"R", Vector3(1, 0, 0)},
@@ -19,7 +18,6 @@ void RubiksCubePiece::initColors() {
   float y = initialPosition.y;
   float z = initialPosition.z;
 
-  // Center pieces
   if (pieceType == PIECE_CENTER) {
     if (x == -1.0f)
       initialColors["L"] = static_cast<Color>(_COLOR_BLUE);
@@ -36,7 +34,6 @@ void RubiksCubePiece::initColors() {
     return;
   }
 
-  // Edge and corner pieces
   if (x == -1.0f)
     initialColors["L"] = static_cast<Color>(_COLOR_BLUE);
   else if (x == 1.0f)

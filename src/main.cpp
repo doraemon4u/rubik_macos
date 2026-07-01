@@ -1,10 +1,40 @@
 #include "RubiksCube.hpp"
-#include <chrono>
 #include <iostream>
-#include <thread>
+#include <unordered_map>
 
 #ifdef _WIN32
+#define PDC_NCMOUSE
 #include <pdcurses.h>
+#include <windows.h>
+
+struct WinMouseDrag {
+  int prev_x = -1, prev_y = -1;
+  bool active = false;
+
+  void poll(RubiksCube &cube) {
+    bool down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+    POINT pt;
+    GetCursorPos(&pt);
+
+    if (down && !active) {
+      active = true;
+      prev_x = pt.x;
+      prev_y = pt.y;
+    } else if (!down) {
+      active = false;
+    } else if (active) {
+      int dx = pt.x - prev_x;
+      int dy = pt.y - prev_y;
+      if (dx != 0 || dy != 0) {
+        cube.rotateByMouseDelta(static_cast<float>(dx) * 0.4f,
+                                static_cast<float>(dy) * 0.4f);
+        prev_x = pt.x;
+        prev_y = pt.y;
+      }
+    }
+  }
+};
+
 #else
 #include <curses.h>
 #endif
@@ -16,6 +46,8 @@ void printInstructions() {
   std::cout << std::endl;
   std::cout << "Controls:" << std::endl;
   std::cout << "  Arrow Keys - Rotate cube" << std::endl;
+  std::cout << "  Mouse Drag - Rotate cube" << std::endl;
+  std::cout << "  Scroll     - Zoom in/out" << std::endl;
   std::cout << "  +/-        - Zoom in/out" << std::endl;
   std::cout << "  C          - Reset cube" << std::endl;
   std::cout << "  X          - Scramble cube" << std::endl;
@@ -41,13 +73,24 @@ void printInstructions() {
 int main() {
   printInstructions();
 
-  // Initialize ncurses
+#ifdef _WIN32
+  {
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD dwMode = 0;
+    if (GetConsoleMode(hOut, &dwMode)) {
+      dwMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+      SetConsoleMode(hOut, dwMode);
+    }
+  }
+  timeBeginPeriod(1);
+#endif
+
   initscr();
   cbreak();
   noecho();
   curs_set(0);
   keypad(stdscr, TRUE);
-  nodelay(stdscr, TRUE);
+  timeout(16);
 
   if (!has_colors()) {
     endwin();
@@ -55,29 +98,59 @@ int main() {
     return 1;
   }
 
-  // 启用鼠标事件
   mousemask(ALL_MOUSE_EVENTS | REPORT_MOUSE_POSITION, NULL);
+#ifndef _WIN32
+  printf("\033[?1003h\n");
+#endif
   mouseinterval(0);
-  printf("\033[?1003h\n"); // 启用鼠标移动跟踪
 
   start_color();
+#ifndef _WIN32
   use_default_colors();
+#endif
 
-  // Create cube
   RubiksCube cube;
-  std::map<int, int> colorCache;
+  std::unordered_map<int, int> colorCache;
+  colorCache.reserve(64);
+#ifdef _WIN32
+  WinMouseDrag mouseDrag;
+#endif
 
   try {
     while (true) {
       int ch = getch();
 
+#ifdef _WIN32
+      mouseDrag.poll(cube);
       if (ch == KEY_MOUSE) {
         MEVENT event;
         if (getmouse(&event) == OK) {
-          static int prev_x = -1, prev_y = -1;
-          static bool dragging = false;
+          if (event.bstate & BUTTON4_PRESSED) {
+            cube.zoom(3);
+          } else if (event.bstate & BUTTON5_PRESSED) {
+            cube.zoom(-3);
+          }
+        }
+        int w, h;
+        getmaxyx(stdscr, h, w);
+        if (w >= 80 && h >= 40) {
+          cube.draw(stdscr, w, h, colorCache);
+          refresh();
+        }
+        continue;
+      }
+#else
+      if (ch == KEY_MOUSE) {
+        static int prev_x = -1, prev_y = -1;
+        static bool dragging = false;
 
-          if (event.bstate & BUTTON1_PRESSED) {
+        MEVENT event;
+        if (getmouse(&event) == OK) {
+          if (event.bstate & BUTTON4_PRESSED) {
+            cube.zoom(1);
+          } else if (event.bstate & BUTTON5_PRESSED) {
+            cube.zoom(-1);
+          } else if (event.bstate & BUTTON1_PRESSED) {
             dragging = true;
             prev_x = event.x;
             prev_y = event.y;
@@ -94,10 +167,17 @@ int main() {
             }
           }
         }
-        continue; // 跳过后续键盘处理
+        int width, height;
+        getmaxyx(stdscr, height, width);
+        if (width >= 80 && height >= 40) {
+          cube.draw(stdscr, width, height, colorCache);
+          refresh();
+        }
+        continue;
       }
+#endif
 
-      if (ch == 27 || ch == 'q') { // ESC
+      if (ch == 27 || ch == 'q') {
         break;
       } else if (ch == 'c' || ch == 'C') {
         cube.reset();
@@ -145,32 +225,31 @@ int main() {
 
       int width, height;
       getmaxyx(stdscr, height, width);
-
-      if (width < 80 || height < 40) {
+      if (width >= 80 && height >= 40) {
+        cube.draw(stdscr, width, height, colorCache);
+        refresh();
+      } else {
         clear();
         std::string msg = "Please resize terminal to at least 80x40";
         mvprintw(height / 2,
                  std::max(0, (width - static_cast<int>(msg.length())) / 2),
                  "%s", msg.c_str());
         refresh();
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        continue;
       }
-
-      cube.draw(stdscr, width, height, colorCache);
-      refresh();
-
-      std::this_thread::sleep_for(std::chrono::milliseconds(16)); // ~60 FPS
     }
   } catch (const std::exception &e) {
     endwin();
     std::cerr << "Error: " << e.what() << std::endl;
     return 1;
   }
-  // 恢复终端鼠标设置
+#ifndef _WIN32
   printf("\033[?1003l\n");
+#endif
 
   endwin();
+#ifdef _WIN32
+  timeEndPeriod(1);
+#endif
   std::cout << "Game ended." << std::endl << "Goodbye!" << std::endl;
   return 0;
 }
