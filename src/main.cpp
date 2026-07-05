@@ -147,9 +147,9 @@ int main() {
         MEVENT event;
         if (getmouse(&event) == OK) {
           if (event.bstate & BUTTON4_PRESSED) {
-            cube.zoom(1);
+            cube.zoom(3);
           } else if (event.bstate & BUTTON5_PRESSED) {
-            cube.zoom(-1);
+            cube.zoom(-3);
           } else if (event.bstate & BUTTON1_PRESSED) {
             dragging = true;
             prev_x = event.x;
