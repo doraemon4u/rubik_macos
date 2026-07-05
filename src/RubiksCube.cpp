@@ -41,11 +41,10 @@ const std::map<std::string, Vector3> RubiksCube::ROTATION_AXES = {
     {"U", Vector3(0, 1, 0)},  {"D", Vector3(0, -1, 0)}};
 
 RubiksCube::RubiksCube()
-    : rotation(1, 0, 0, 0), scale(25.0f), position(0, 0, 10), aspectRatio(2.0f),
+    : rotation(1, 0, 0, 0), scale(25.0f), position(0, 0, 10),
+      lightPosition(0, LIGHT_HEIGHT, 0), aspectRatio(2.0f),
       cameraPosition(0, 0, 0), focalLength(8.0f), animating(false),
       animationProgress(0.0f), dirty(true) {
-
-  lightDir = Vector3(0.3f, 0.5f, -0.8f).normalized();
 
   viewDirections = {{"F", Vector3(0, 0, -1)}, {"B", Vector3(0, 0, 1)},
                     {"L", Vector3(-1, 0, 0)}, {"R", Vector3(1, 0, 0)},
@@ -55,6 +54,7 @@ RubiksCube::RubiksCube()
                  {"R", "R"}, {"U", "U"}, {"D", "D"}};
 
   createPieces();
+  buildShadingLUT();
 }
 
 void RubiksCube::createPieces() {
@@ -310,10 +310,49 @@ RubiksCube::getPieceFaceCorners(const std::shared_ptr<RubiksCubePiece> &piece,
   return worldCorners;
 }
 
+void RubiksCube::buildShadingLUT() {
+  for (int c = 0; c < static_cast<int>(COLOR_RGB.size()); c++) {
+    for (int lv = 0; lv < NUM_LIGHT_LEVELS; lv++) {
+      float t = static_cast<float>(lv) / (NUM_LIGHT_LEVELS - 1);
+      float intensity =
+          std::min(1.0f, AMBIENT_INTENSITY + DIFFUSE_STRENGTH * t);
+      RGB shaded = COLOR_RGB[c].shadeInHSL(intensity);
+      shadedColorLUT[c][lv] = shaded.to256Color();
+    }
+  }
+}
+
+int RubiksCube::calculateLightLevel(const Vector3 &normalWorld,
+                                    const Vector3 &worldCenter) const {
+  Vector3 toLight = lightPosition - worldCenter;
+  float distSq = toLight.dot(toLight);
+  float attenuation = 1.0f / (1.0f + ATTENUATION_FACTOR * distSq);
+  Vector3 L = toLight.normalized();
+
+  float diffuse = normalWorld.dot(L);
+  if (diffuse < 0.0f)
+    diffuse = 0.0f;
+
+  float intensity =
+      AMBIENT_INTENSITY + DIFFUSE_STRENGTH * diffuse * attenuation;
+  if (intensity > 1.0f)
+    intensity = 1.0f;
+
+  int level = static_cast<int>(intensity * (NUM_LIGHT_LEVELS - 1) + 0.5f);
+  if (level < 0)
+    level = 0;
+  if (level >= NUM_LIGHT_LEVELS)
+    level = NUM_LIGHT_LEVELS - 1;
+  return level;
+}
+
 RGB RubiksCube::calculateShadedColor(const RGB &baseColor,
                                      const Vector3 &normal,
                                      const Vector3 &worldPos) const {
-  return baseColor;
+  int level = calculateLightLevel(normal, worldPos);
+  float t = static_cast<float>(level) / (NUM_LIGHT_LEVELS - 1);
+  float intensity = std::min(1.0f, AMBIENT_INTENSITY + DIFFUSE_STRENGTH * t);
+  return baseColor.shadeInHSL(intensity);
 }
 
 std::tuple<int, int, float>
@@ -519,10 +558,8 @@ void RubiksCube::draw(WINDOW *win, int width, int height,
           colorIndexInt >= static_cast<int>(COLOR_RGB.size()))
         continue;
 
-      RGB baseColor = COLOR_RGB[colorIndexInt];
-      RGB shadedColor =
-          calculateShadedColor(baseColor, normalWorld, worldCenter);
-      int termIdx = shadedColor.to256Color();
+      int lightLevel = calculateLightLevel(normalWorld, worldCenter);
+      int termIdx = shadedColorLUT[colorIndexInt][lightLevel];
 
       int colorPair;
       auto it = colorCache.find(termIdx);

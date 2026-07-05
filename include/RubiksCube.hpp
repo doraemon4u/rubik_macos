@@ -27,8 +27,17 @@ private:
   std::vector<std::shared_ptr<RubiksCubePiece>> pieces; ///< 所有魔方块的集合
   Quaternion rotation;                                  ///< 魔方的整体旋转
   float scale;                                          ///< 缩放因子
-  Vector3 position; ///< 魔方在世界坐标系中的位置
-  Vector3 lightDir; ///< 光照方向（用于计算亮度）
+  Vector3 position;      ///< 魔方在世界坐标系中的位置
+  Vector3 lightPosition; ///< 点光源位置（位于摄像头上方）
+
+  static constexpr int NUM_LIGHT_LEVELS = 8; ///< 光照量化级数
+  static constexpr float AMBIENT_INTENSITY =
+      0.28f; ///< 环境光强度（暗面保底可见）
+  static constexpr float DIFFUSE_STRENGTH = 0.68f; ///< 漫反射强度
+  static constexpr float ATTENUATION_FACTOR =
+      0.002f;                              ///< 距离衰减系数（温和，主要靠方向）
+  int shadedColorLUT[6][NUM_LIGHT_LEVELS]; ///< 预计算：[基色索引][光照等级] ->
+                                           ///< 256色终端索引
 
   float aspectRatio;      ///< 宽高比
   Vector3 cameraPosition; ///< 相机位置
@@ -53,7 +62,8 @@ private:
   // Constants
   static constexpr float ANIMATION_DURATION = 0.3f; ///< 动画持续时间（秒）
   static constexpr float ROTATION_ANGLE =
-      3.14159265359f / 2.0f; ///< 单次旋转角度（90度）
+      3.14159265359f / 2.0f;                  ///< 单次旋转角度（90度）
+  static constexpr float LIGHT_HEIGHT = 7.0f; ///< 光源在摄像头上方的高度
 
   // Color definitions
   static const std::vector<RGB> COLOR_RGB;                   ///< RGB颜色定义
@@ -125,11 +135,28 @@ private:
                       const Vector3 &piecePos) const;
 
   /**
-   * @brief 返回面的显示颜色（当前直接返回基色，不做光影处理）
+   * @brief 构建着色查找表（LUT）：预计算每种基色在每个光照等级下的 256 色索引
+   * @details 在构造函数中调用一次，运行时直接查表，消除 to256Color() 的重复计算
+   */
+  void buildShadingLUT();
+
+  /**
+   * @brief 计算面的光照等级（量化后的整数，0..NUM_LIGHT_LEVELS-1）
+   * @param normalWorld 世界空间面法线
+   * @param worldCenter 面中心世界坐标
+   * @return 量化光照等级
+   * @details 采用 Lambert 漫反射 + 距离衰减 + 环境光，结果量化以命中 LUT
+   */
+  int calculateLightLevel(const Vector3 &normalWorld,
+                          const Vector3 &worldCenter) const;
+
+  /**
+   * @brief 计算面在光照下的显示颜色（含光影处理）
    * @param baseColor 基础颜色
-   * @param normal 面法线（世界空间，未使用）
-   * @param worldPos 面中心世界坐标（未使用）
-   * @return baseColor 原样返回
+   * @param normal 面法线（世界空间）
+   * @param worldPos 面中心世界坐标
+   * @return 经 Lambert 漫反射 + 环境光着色后的 RGB
+   * @note 渲染主循环使用 LUT 快速路径，此方法保留用于辅助/调试场景
    */
   RGB calculateShadedColor(const RGB &baseColor, const Vector3 &normal,
                            const Vector3 &worldPos) const;

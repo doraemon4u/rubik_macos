@@ -62,13 +62,13 @@ RGB RGB::fromHSL(const HSL &hsl) {
 RGB RGB::shadeInHSL(float lightFactor) const {
   HSL hsl = toHSL();
 
-  hsl.l = std::max(0.10f, std::min(1.0f, hsl.l * lightFactor));
+  float newL = std::clamp(hsl.l * (0.4f + 0.6f * lightFactor), 0.12f, 1.0f);
 
-  if (hsl.l < 0.20f) {
-    hsl.l = 0.20f;
-    hsl.s = std::max(hsl.s * 0.7f, 0.3f);
-  }
+  float satScale = std::clamp(0.35f + 0.65f * lightFactor, 0.35f, 1.0f);
+  float newS = std::clamp(hsl.s * satScale, 0.0f, 1.0f);
 
+  hsl.l = newL;
+  hsl.s = newS;
   return fromHSL(hsl);
 }
 
