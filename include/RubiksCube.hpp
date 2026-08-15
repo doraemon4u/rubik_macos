@@ -249,7 +249,34 @@ public:
    */
   void scramble(int moves = 20);
 
-  void undo();
+  /**
+   * @brief 撤销上一步操作
+   * @return 是否成功撤销（历史为空时返回 false，例如打乱后立即撤销）
+   */
+  bool undo();
+
+  /**
+   * @brief 导出当前魔方状态的 54 贴纸 facelet 字符串（min2phase 输入格式）
+   * @details 按 U1..U9, R1..R9, F1..F9, D1..D9, L1..L9, B1..B9 的固定顺序
+   *          收集每个贴纸颜色，并映射为面符号（白->U、黄->D、红->B、
+   *          橙->F、蓝->L、绿->R，与 FACE_TO_COLOR 一致）。
+   * @note 会先完成任何进行中的旋转动画
+   */
+  std::string getFaceletString();
+
+  /**
+   * @brief 获取视图方向到实际魔方面的映射（只读）
+   */
+  const std::map<std::string, std::string> &getViewMapping() const {
+    return viewMapping;
+  }
+
+  /**
+   * @brief 获取指定实际面对应的颜色
+   * @param face 实际面名（"F","B","L","R","U","D"）
+   * @return 该面的颜色，未知面返回 _COLOR_NONE
+   */
+  Color getFaceColor(const std::string &face) const;
 
   /**
    * @brief 检查是否需要重绘

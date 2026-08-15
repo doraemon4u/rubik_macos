@@ -1,3 +1,4 @@
+#include "HintSystem.hpp"
 #include "RubiksCube.hpp"
 #include <iostream>
 #include <unordered_map>
@@ -110,6 +111,7 @@ int main() {
 #endif
 
   RubiksCube cube;
+  HintSystem hint;
   std::unordered_map<int, int> colorCache;
   colorCache.reserve(64);
 #ifdef _WIN32
@@ -135,6 +137,7 @@ int main() {
         getmaxyx(stdscr, h, w);
         if (w >= 80 && h >= 40) {
           cube.draw(stdscr, w, h, colorCache);
+          hint.draw(stdscr, w, h, cube);
           refresh();
         }
         continue;
@@ -171,6 +174,7 @@ int main() {
         getmaxyx(stdscr, height, width);
         if (width >= 80 && height >= 40) {
           cube.draw(stdscr, width, height, colorCache);
+          hint.draw(stdscr, width, height, cube);
           refresh();
         }
         continue;
@@ -179,10 +183,20 @@ int main() {
 
       if (ch == 27 || ch == 'q') {
         break;
+      } else if (ch == 'h' || ch == 'H') {
+        hint.toggle();
+      } else if (ch == ' ') {
+        if (hint.isEnabled()) {
+          hint.drawSolvingMessage(stdscr);
+          refresh();
+          hint.onSpace(cube);
+        }
       } else if (ch == 'c' || ch == 'C') {
         cube.reset();
+        hint.onCubeStateChanged();
       } else if (ch == 'x' || ch == 'X') {
         cube.scramble(20);
+        hint.onCubeStateChanged();
       } else if (ch == KEY_UP) {
         cube.rotateByMouseDelta(0, -10);
       } else if (ch == KEY_DOWN) {
@@ -197,36 +211,50 @@ int main() {
         cube.zoom(-1);
       } else if (ch == 'f') {
         cube.rotateViewDirection("F", true);
+        hint.onUserMove("F", true, cube);
       } else if (ch == 'F') {
         cube.rotateViewDirection("F", false);
+        hint.onUserMove("F", false, cube);
       } else if (ch == 'b') {
         cube.rotateViewDirection("B", true);
+        hint.onUserMove("B", true, cube);
       } else if (ch == 'B') {
         cube.rotateViewDirection("B", false);
+        hint.onUserMove("B", false, cube);
       } else if (ch == 'l') {
         cube.rotateViewDirection("L", true);
+        hint.onUserMove("L", true, cube);
       } else if (ch == 'L') {
         cube.rotateViewDirection("L", false);
+        hint.onUserMove("L", false, cube);
       } else if (ch == 'r') {
         cube.rotateViewDirection("R", true);
+        hint.onUserMove("R", true, cube);
       } else if (ch == 'R') {
         cube.rotateViewDirection("R", false);
+        hint.onUserMove("R", false, cube);
       } else if (ch == 'u') {
         cube.rotateViewDirection("U", true);
+        hint.onUserMove("U", true, cube);
       } else if (ch == 'U') {
         cube.rotateViewDirection("U", false);
+        hint.onUserMove("U", false, cube);
       } else if (ch == 'd') {
         cube.rotateViewDirection("D", true);
+        hint.onUserMove("D", true, cube);
       } else if (ch == 'D') {
         cube.rotateViewDirection("D", false);
+        hint.onUserMove("D", false, cube);
       } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
-        cube.undo();
+        bool ok = cube.undo();
+        hint.onUndo(ok, cube);
       }
 
       int width, height;
       getmaxyx(stdscr, height, width);
       if (width >= 80 && height >= 40) {
         cube.draw(stdscr, width, height, colorCache);
+        hint.draw(stdscr, width, height, cube);
         refresh();
       } else {
         clear();

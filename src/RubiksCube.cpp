@@ -1,15 +1,20 @@
 #include "RubiksCube.hpp"
 #include "Enums.hpp"
 #include <algorithm>
+#include <array>
 #include <chrono>
+
 #ifdef _WIN32
 #define PDC_NCMOUSE
 #include <pdcurses.h>
 #else
 #include <curses.h>
 #endif
+
+#include <cmath>
 #include <functional>
 #include <random>
+#include <string>
 #include <unordered_map>
 
 const std::vector<RGB> RubiksCube::COLOR_RGB = {
@@ -272,6 +277,94 @@ Color RubiksCube::getPieceFaceColor(
     const std::shared_ptr<RubiksCubePiece> &piece,
     const std::string &faceName) const {
   return piece->getCurrentFaceColor(faceName);
+}
+
+Color RubiksCube::getFaceColor(const std::string &face) const {
+  auto it = FACE_TO_COLOR.find(face);
+  if (it != FACE_TO_COLOR.end()) {
+    return it->second;
+  }
+  return _COLOR_NONE;
+}
+
+std::string RubiksCube::getFaceletString() {
+  completeAnimation();
+
+  static const char COLOR_TO_FACE[] = {'B', 'F', 'L', 'R', 'U', 'D'};
+
+  struct FaceTable {
+    Vector3 normal;
+    Vector3 rowAxis;
+    int rowSign;
+    Vector3 colAxis;
+    int colSign;
+  };
+  static const std::map<std::string, FaceTable> FACE_TABLES = {
+      {"U", {Vector3(0, 1, 0), Vector3(0, 0, 1), 1, Vector3(1, 0, 0), -1}},
+      {"R", {Vector3(1, 0, 0), Vector3(0, 1, 0), 1, Vector3(0, 0, 1), -1}},
+      {"F", {Vector3(0, 0, -1), Vector3(0, 1, 0), 1, Vector3(1, 0, 0), -1}},
+      {"D", {Vector3(0, -1, 0), Vector3(0, 0, 1), -1, Vector3(1, 0, 0), -1}},
+      {"L", {Vector3(-1, 0, 0), Vector3(0, 1, 0), 1, Vector3(0, 0, 1), 1}},
+      {"B", {Vector3(0, 0, 1), Vector3(0, 1, 0), 1, Vector3(1, 0, 0), 1}},
+  };
+  static const std::vector<std::string> FACE_ORDER = {"U", "R", "F",
+                                                      "D", "L", "B"};
+
+  auto slotIndex = [](const Vector3 &p) {
+    return (static_cast<int>(std::lround(p.x)) + 1) * 9 +
+           (static_cast<int>(std::lround(p.y)) + 1) * 3 +
+           (static_cast<int>(std::lround(p.z)) + 1);
+  };
+  std::array<std::shared_ptr<RubiksCubePiece>, 27> slot{};
+  for (const auto &piece : pieces) {
+    slot[slotIndex(piece->getCurrentPosition())] = piece;
+  }
+
+  static const char LOCAL_FACES[] = {'U', 'R', 'F', 'D', 'L', 'B'};
+  static const Vector3 LOCAL_NORMALS[] = {
+      Vector3(0, 1, 0),  // U
+      Vector3(1, 0, 0),  // R
+      Vector3(0, 0, 1),  // F
+      Vector3(0, -1, 0), // D
+      Vector3(-1, 0, 0), // L
+      Vector3(0, 0, -1), // B
+  };
+
+  std::string facelet;
+  facelet.reserve(54);
+
+  for (const auto &face : FACE_ORDER) {
+    const FaceTable &ft = FACE_TABLES.at(face);
+
+    for (int rowVal = 1; rowVal >= -1; rowVal--) {
+      for (int colVal = 1; colVal >= -1; colVal--) {
+        Vector3 pos = ft.normal;
+        pos = pos + ft.rowAxis * (ft.rowSign * rowVal);
+        pos = pos + ft.colAxis * (ft.colSign * colVal);
+
+        auto piece = slot[slotIndex(pos)];
+        if (!piece) {
+          return std::string();
+        }
+
+        Color color = _COLOR_NONE;
+        const Quaternion &lr = piece->getLocalRotation();
+        for (int i = 0; i < 6; i++) {
+          Vector3 worldN = lr.rotateVector(LOCAL_NORMALS[i]);
+          if (ft.normal.dot(worldN) > 0.99f) {
+            color = piece->getCurrentFaceColor(std::string(1, LOCAL_FACES[i]));
+            break;
+          }
+        }
+        if (color == _COLOR_NONE) {
+          return std::string();
+        }
+        facelet += COLOR_TO_FACE[static_cast<int>(color)];
+      }
+    }
+  }
+
+  return facelet;
 }
 
 std::vector<Vector3>
@@ -661,6 +754,8 @@ void RubiksCube::drawUI(WINDOW *win, int width, int height,
       "  +/-        - Zoom in/out",
       "  C          - Reset cube",
       "  X          - Scramble cube",
+      "  H          - Toggle hint system",
+      "  SPACE      - Solve & show hints",
       "  ESC        - Exit",
       "",
       "Rotate faces (based on current view):",
@@ -683,8 +778,8 @@ void RubiksCube::drawUI(WINDOW *win, int width, int height,
       "Scale: " + std::to_string(static_cast<int>(scale)),
       "Animation: " + std::string(animating ? "Active" : "None")};
 
-  static const int VIEW_MAP_START = 16;
-  static const int VIEW_MAP_END = 21;
+  static const int VIEW_MAP_START = 18;
+  static const int VIEW_MAP_END = 23;
 
   static const std::vector<std::string> VIEW_ORDER = {"F", "B", "L",
                                                       "R", "U", "D"};
@@ -839,9 +934,9 @@ void RubiksCube::rotateFaceInternal(const std::string &actualFace,
   dirty = true;
 }
 
-void RubiksCube::undo() {
+bool RubiksCube::undo() {
   if (history.empty())
-    return;
+    return false;
 
   completeAnimation();
 
@@ -856,7 +951,8 @@ void RubiksCube::undo() {
     }
   }
   if (actualFace.empty())
-    return;
+    return false;
 
   rotateFaceInternal(actualFace, clockwise, false);
+  return true;
 }
