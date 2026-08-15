@@ -1,6 +1,6 @@
 # rubik
 
-一个使用 C++ 和 curses 库编写的 3D 魔方模拟器，在终端中运行。
+一个使用 C++ 和 curses 库编写的 3D 魔方模拟器，在终端中运行，内含解魔方工具用于辅助求解。
 
 ## 构建
 
@@ -40,12 +40,12 @@ bash build.sh
 
 常见发行版手动安装依赖：
 
-| 发行版 | 安装命令 |
-|--------|----------|
+| 发行版        | 安装命令                                                       |
+| ------------- | -------------------------------------------------------------- |
 | Ubuntu/Debian | `sudo apt-get install -y build-essential cmake libncurses-dev` |
-| Fedora | `sudo dnf install -y gcc-c++ cmake make ncurses-devel` |
-| Arch | `sudo pacman -S gcc cmake make ncurses` |
-| CentOS/RHEL | `sudo yum install -y gcc-c++ cmake make ncurses-devel` |
+| Fedora        | `sudo dnf install -y gcc-c++ cmake make ncurses-devel`         |
+| Arch          | `sudo pacman -S gcc cmake make ncurses`                        |
+| CentOS/RHEL   | `sudo yum install -y gcc-c++ cmake make ncurses-devel`         |
 
 运行：
 
@@ -55,17 +55,17 @@ cd build_linux && ./rubik
 
 ## 操作说明
 
-| 按键 | 功能 |
-|------|------|
-| 方向键 | 旋转魔方视角 |
-| `+` / `-` | 放大 / 缩小 |
-| `C` | 重置魔方 |
-| `X` | 随机打乱 |
-| `Backspace` | 撤销上一步 |
-| `f` / `F` | 前面 顺/逆时针 |
-| `b` / `B` | 后面 顺/逆时针 |
-| `l` / `L` | 左面 顺/逆时针 |
-| `r` / `R` | 右面 顺/逆时针 |
-| `u` / `U` | 上面 顺/逆时针 |
-| `d` / `D` | 下面 顺/逆时针 |
-| `ESC` / `q` | 退出 |
+| 按键        | 功能           |
+| ----------- | -------------- |
+| 方向键      | 旋转魔方视角   |
+| `+` / `-`   | 放大 / 缩小    |
+| `C`         | 重置魔方       |
+| `X`         | 随机打乱       |
+| `Backspace` | 撤销上一步     |
+| `f` / `F`   | 前面 顺/逆时针 |
+| `b` / `B`   | 后面 顺/逆时针 |
+| `l` / `L`   | 左面 顺/逆时针 |
+| `r` / `R`   | 右面 顺/逆时针 |
+| `u` / `U`   | 上面 顺/逆时针 |
+| `d` / `D`   | 下面 顺/逆时针 |
+| `ESC` / `q` | 退出           |
