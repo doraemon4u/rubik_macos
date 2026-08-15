@@ -24,7 +24,7 @@ void HintSystem::ensureColors() {
   init256(PAIR_RED, RGB(176, 96, 96));           // 低饱和红（Back/Invalid）
   init256(PAIR_ORANGE, RGB(255, 135, 0));        // Front
   init256(PAIR_BLUE, RGB(60, 120, 255));         // Left
-  init256(PAIR_GREEN, RGB(0, 200, 0));           // Right / Finish
+  init256(PAIR_GREEN, RGB(0, 200, 0));           // Right / Finish / Deviation
   init256(PAIR_WHITE, RGB(235, 235, 235));       // Up
   init256(PAIR_YELLOW, RGB(235, 235, 0));        // Down
 }
@@ -32,17 +32,17 @@ void HintSystem::ensureColors() {
 int HintSystem::faceColorPair(char face) {
   switch (face) {
   case 'F':
-    return PAIR_ORANGE;
+    return PAIR_ORANGE; // F = 橙
   case 'B':
-    return PAIR_RED;
+    return PAIR_RED; // B = 红
   case 'L':
-    return PAIR_BLUE;
+    return PAIR_BLUE; // L = 蓝
   case 'R':
-    return PAIR_GREEN;
+    return PAIR_GREEN; // R = 绿
   case 'U':
-    return PAIR_WHITE;
+    return PAIR_WHITE; // U = 白
   case 'D':
-    return PAIR_YELLOW;
+    return PAIR_YELLOW; // D = 黄
   default:
     return PAIR_WHITE;
   }
@@ -109,6 +109,13 @@ bool HintSystem::parseSolution(const std::string &sol, std::vector<Move> &out) {
   return true;
 }
 
+void HintSystem::invalidate() {
+  state_ = State::INVALID;
+  deviation_ = 0;
+  driftStack_.clear();
+  message_ = "Invalid - press SPACE for a new solution";
+}
+
 void HintSystem::toggle() { enabled_ = !enabled_; }
 
 void HintSystem::onSpace(RubiksCube &cube) {
@@ -120,6 +127,8 @@ void HintSystem::onSpace(RubiksCube &cube) {
 
   moves_.clear();
   pointer_ = 0;
+  deviation_ = 0;
+  driftStack_.clear();
   message_.clear();
 
   if (!parseSolution(sol, moves_)) {
@@ -140,11 +149,10 @@ void HintSystem::onUserMove(const std::string &viewDir, bool clockwise,
     return;
 
   if (state_ == State::FINISH) {
-    state_ = State::INVALID;
-    message_ = "Invalid - press SPACE for a new solution";
+    invalidate();
     return;
   }
-  if (state_ != State::VALID)
+  if (state_ != State::VALID && state_ != State::DRIFT)
     return;
 
   const auto &vm = cube.getViewMapping();
@@ -154,42 +162,84 @@ void HintSystem::onUserMove(const std::string &viewDir, bool clockwise,
 
   Move m{it->second[0], clockwise};
 
-  if (pointer_ < moves_.size() && m == moves_[pointer_]) {
-    ++pointer_;
-    if (pointer_ >= moves_.size()) {
-      moves_.clear();
-      pointer_ = 0;
-      state_ = State::FINISH;
+  if (state_ == State::VALID) {
+    if (pointer_ < moves_.size() && m == moves_[pointer_]) {
+      ++pointer_;
+      if (pointer_ >= moves_.size()) {
+        moves_.clear();
+        pointer_ = 0;
+        state_ = State::FINISH;
+      }
+      return;
+    }
+    if (pointer_ > 0 && m == inverse(moves_[pointer_ - 1])) {
+      --pointer_;
+      return;
+    }
+    state_ = State::DRIFT;
+    deviation_ = 1;
+    driftStack_.clear();
+    driftStack_.push_back(m);
+    return;
+  }
+
+  if (m == inverse(driftStack_.back())) {
+    driftStack_.pop_back();
+    --deviation_;
+    if (deviation_ == 0) {
+      state_ = State::VALID;
     }
     return;
   }
-
-  if (pointer_ > 0 && m == inverse(moves_[pointer_ - 1])) {
-    --pointer_;
-    return;
+  driftStack_.push_back(m);
+  ++deviation_;
+  if (deviation_ > MAX_DEVIATION) {
+    invalidate();
   }
-
-  state_ = State::INVALID;
-  message_ = "Invalid - press SPACE for a new solution";
 }
 
-void HintSystem::onUndo(bool success, RubiksCube &) {
+void HintSystem::onUndo(bool success, bool hasLast, char lastFace, bool lastCw,
+                        RubiksCube &) {
   if (!enabled_)
     return;
 
   if (state_ == State::VALID) {
     if (!success)
       return;
-    if (pointer_ > 0) {
+    if (!hasLast) {
+      invalidate();
+      return;
+    }
+    Move x{lastFace, lastCw};
+    if (pointer_ > 0 && x == moves_[pointer_ - 1]) {
       --pointer_;
       return;
     }
-    state_ = State::INVALID;
-    message_ = "Invalid - press SPACE for a new solution";
+    state_ = State::DRIFT;
+    deviation_ = 1;
+    driftStack_.clear();
+    driftStack_.push_back(inverse(x));
+    return;
+  } else if (state_ == State::DRIFT) {
+    if (!success || !hasLast)
+      return;
+    Move x{lastFace, lastCw};
+    if (x == driftStack_.back()) {
+      driftStack_.pop_back();
+      --deviation_;
+      if (deviation_ == 0) {
+        state_ = State::VALID;
+      }
+    } else {
+      driftStack_.push_back(inverse(x));
+      ++deviation_;
+      if (deviation_ > MAX_DEVIATION) {
+        invalidate();
+      }
+    }
   } else if (state_ == State::FINISH) {
     if (success) {
-      state_ = State::INVALID;
-      message_ = "Invalid - press SPACE for a new solution";
+      invalidate();
     }
   }
 }
@@ -197,9 +247,9 @@ void HintSystem::onUndo(bool success, RubiksCube &) {
 void HintSystem::onCubeStateChanged() {
   if (!enabled_)
     return;
-  if (state_ == State::VALID || state_ == State::FINISH) {
-    state_ = State::INVALID;
-    message_ = "Invalid - press SPACE for a new solution";
+  if (state_ == State::VALID || state_ == State::FINISH ||
+      state_ == State::DRIFT) {
+    invalidate();
   }
 }
 
@@ -208,6 +258,90 @@ void HintSystem::drawSolvingMessage(WINDOW *win) {
     return;
   ensureColors();
   mvwprintw(win, 1, 1, "Solving...");
+}
+
+void HintSystem::drawMoveRow(WINDOW *win, int yrow, int x0, char viewDir,
+                             bool cw, const std::string &numStr, int numW,
+                             int maxOpLen, bool done, bool current) const {
+  auto viewName = [](char v) -> const char * {
+    switch (v) {
+    case 'F':
+      return "Front";
+    case 'B':
+      return "Back";
+    case 'L':
+      return "Left";
+    case 'R':
+      return "Right";
+    case 'U':
+      return "Up";
+    case 'D':
+      return "Down";
+    default:
+      return "?";
+    }
+  };
+
+  int col = x0;
+
+  wattron(win, COLOR_PAIR(PAIR_CYAN));
+  mvwaddch(win, yrow, col, current ? '[' : ' ');
+  wattroff(win, COLOR_PAIR(PAIR_CYAN));
+  ++col;
+
+  mvwaddch(win, yrow, col++, ' ');
+
+  const std::string numPadded =
+      std::string(static_cast<size_t>(numW) - numStr.size(), ' ') + numStr;
+  if (done)
+    wattron(win, COLOR_PAIR(PAIR_GREY));
+  for (int k = 0; k < numW; ++k) {
+    mvwaddch(win, yrow, col + k, numPadded[k]);
+  }
+  if (done)
+    wattroff(win, COLOR_PAIR(PAIR_GREY));
+  col += numW;
+
+  mvwaddch(win, yrow, col++, ' ');
+
+  if (!cw) {
+    if (done)
+      wattron(win, COLOR_PAIR(PAIR_GREY));
+    else
+      wattron(win, COLOR_PAIR(PAIR_BLOOD));
+    mvwaddch(win, yrow, col, '*');
+    if (done)
+      wattroff(win, COLOR_PAIR(PAIR_GREY));
+    else
+      wattroff(win, COLOR_PAIR(PAIR_BLOOD));
+  } else {
+    mvwaddch(win, yrow, col, ' ');
+  }
+  ++col;
+
+  mvwaddch(win, yrow, col++, ' ');
+
+  const char *name = viewName(viewDir);
+  const int pair = faceColorPair(viewDir);
+  if (done)
+    wattron(win, COLOR_PAIR(PAIR_GREY));
+  else
+    wattron(win, COLOR_PAIR(pair));
+  mvwprintw(win, yrow, col, "%s", name);
+  if (done)
+    wattroff(win, COLOR_PAIR(PAIR_GREY));
+  else
+    wattroff(win, COLOR_PAIR(pair));
+  col += static_cast<int>(std::strlen(name));
+
+  if (current) {
+    wattron(win, COLOR_PAIR(PAIR_CYAN));
+    const int closeCol = x0 + 1 + maxOpLen;
+    while (col < closeCol)
+      mvwaddch(win, yrow, col++, ' ');
+    mvwaddch(win, yrow, col, ']');
+    wattroff(win, COLOR_PAIR(PAIR_CYAN));
+  }
 }
 
 void HintSystem::draw(WINDOW *win, int width, int height,
@@ -244,6 +378,27 @@ void HintSystem::draw(WINDOW *win, int width, int height,
     mvwprintw(win, y0 + 1, x0, "%s", message_.c_str());
     return;
   }
+  if (state_ == State::DRIFT) {
+    wattron(win, COLOR_PAIR(PAIR_RED));
+    mvwprintw(win, y0, x0, "Invalid");
+    wattroff(win, COLOR_PAIR(PAIR_RED));
+
+    wattron(win, COLOR_PAIR(PAIR_GREEN));
+    mvwprintw(win, y0 + 1, x0, "Deviation: %d", deviation_);
+    wattroff(win, COLOR_PAIR(PAIR_GREEN));
+
+    if (!driftStack_.empty()) {
+      const Move guide = inverse(driftStack_.back());
+      std::map<char, char> faceToView;
+      for (const auto &kv : cube.getViewMapping()) {
+        faceToView[kv.second[0]] = kv.first[0];
+      }
+      auto it = faceToView.find(guide.face);
+      const char viewDir = it != faceToView.end() ? it->second : guide.face;
+      drawMoveRow(win, y0 + 2, x0, viewDir, guide.cw, "0", 1, 12, false, true);
+    }
+    return;
+  }
 
   const size_t n = moves_.size();
   if (n == 0)
@@ -256,24 +411,6 @@ void HintSystem::draw(WINDOW *win, int width, int height,
   for (const auto &kv : cube.getViewMapping()) {
     faceToView[kv.second[0]] = kv.first[0];
   }
-  auto viewName = [](char v) -> const char * {
-    switch (v) {
-    case 'F':
-      return "Front";
-    case 'B':
-      return "Back";
-    case 'L':
-      return "Left";
-    case 'R':
-      return "Right";
-    case 'U':
-      return "Up";
-    case 'D':
-      return "Down";
-    default:
-      return "?";
-    }
-  };
 
   int maxRows = height - y0 - 2;
   if (maxRows > 18)
@@ -296,66 +433,9 @@ void HintSystem::draw(WINDOW *win, int width, int height,
     const Move &mv = moves_[static_cast<size_t>(i)];
     const bool done = i < static_cast<int>(pointer_);
     const bool current = i == static_cast<int>(pointer_);
-    const char *name = viewName(faceToView[mv.face]);
-    std::string numStr = std::to_string(i);
-    int col = x0;
-
-    wattron(win, COLOR_PAIR(PAIR_CYAN));
-    mvwaddch(win, yrow, col, current ? '[' : ' ');
-    wattroff(win, COLOR_PAIR(PAIR_CYAN));
-    ++col;
-
-    mvwaddch(win, yrow, col++, ' ');
-
-    const std::string numPadded =
-        std::string(static_cast<size_t>(numW) - numStr.size(), ' ') + numStr;
-    if (done)
-      wattron(win, COLOR_PAIR(PAIR_GREY));
-    for (int k = 0; k < numW; ++k) {
-      mvwaddch(win, yrow, col + k, numPadded[k]);
-    }
-    if (done)
-      wattroff(win, COLOR_PAIR(PAIR_GREY));
-    col += numW;
-
-    mvwaddch(win, yrow, col++, ' ');
-
-    if (!mv.cw) {
-      if (done)
-        wattron(win, COLOR_PAIR(PAIR_GREY));
-      else
-        wattron(win, COLOR_PAIR(PAIR_BLOOD));
-      mvwaddch(win, yrow, col, '*');
-      if (done)
-        wattroff(win, COLOR_PAIR(PAIR_GREY));
-      else
-        wattroff(win, COLOR_PAIR(PAIR_BLOOD));
-    } else {
-      mvwaddch(win, yrow, col, ' ');
-    }
-    ++col;
-
-    mvwaddch(win, yrow, col++, ' ');
-
-    const int pair = faceColorPair(mv.face);
-    if (done)
-      wattron(win, COLOR_PAIR(PAIR_GREY));
-    else
-      wattron(win, COLOR_PAIR(pair));
-    mvwprintw(win, yrow, col, "%s", name);
-    if (done)
-      wattroff(win, COLOR_PAIR(PAIR_GREY));
-    else
-      wattroff(win, COLOR_PAIR(pair));
-    col += static_cast<int>(std::strlen(name));
-
-    if (current) {
-      wattron(win, COLOR_PAIR(PAIR_CYAN));
-      const int closeCol = x0 + 1 + maxOpLen;
-      while (col < closeCol)
-        mvwaddch(win, yrow, col++, ' ');
-      mvwaddch(win, yrow, col, ']');
-      wattroff(win, COLOR_PAIR(PAIR_CYAN));
-    }
+    auto it = faceToView.find(mv.face);
+    const char viewDir = it != faceToView.end() ? it->second : mv.face;
+    drawMoveRow(win, yrow, x0, viewDir, mv.cw, std::to_string(i), numW,
+                maxOpLen, done, current);
   }
 }

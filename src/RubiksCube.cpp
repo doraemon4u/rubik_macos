@@ -934,6 +934,20 @@ void RubiksCube::rotateFaceInternal(const std::string &actualFace,
   dirty = true;
 }
 
+bool RubiksCube::getLastPerformedMove(char &face, bool &cw) const {
+  if (history.empty())
+    return false;
+  const auto &[axis, clockwise] = history.back();
+  for (const auto &[f, ax] : ROTATION_AXES) {
+    if ((ax - axis).length() < 0.1f) {
+      face = f[0];
+      cw = !clockwise;
+      return true;
+    }
+  }
+  return false;
+}
+
 bool RubiksCube::undo() {
   if (history.empty())
     return false;

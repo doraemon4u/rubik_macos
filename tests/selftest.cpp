@@ -91,8 +91,13 @@ static void runHintStateTests() {
   cube.rotateViewDirection(std::string(1, f0), cw0);
   hint.onUserMove(std::string(1, f0), cw0, cube);
   check(hint.pointer() == 1, "redo move -> pointer 1");
-  check(cube.undo(), "undo succeeds after a move");
-  hint.onUndo(true, cube);
+  {
+    char lf = 0;
+    bool lc = false;
+    bool hasLast = cube.getLastPerformedMove(lf, lc);
+    check(cube.undo(), "undo succeeds after a move");
+    hint.onUndo(true, hasLast, lf, lc, cube);
+  }
   check(hint.pointer() == 0, "successful undo moves pointer back");
 
   RubiksCube cube2;
@@ -103,27 +108,130 @@ static void runHintStateTests() {
   check(hint2.getState() == HintSystem::State::VALID,
         "fresh scramble -> VALID");
   check(!cube2.undo(), "undo right after scramble fails");
-  hint2.onUndo(false, cube2);
+  hint2.onUndo(false, false, 0, false, cube2);
   check(hint2.getState() == HintSystem::State::VALID && hint2.pointer() == 0,
         "failed undo keeps VALID at head");
 
-  // 6.6 错误操作 -> INVALID（且不可复活）
-  cube2.rotateViewDirection("D", true);
-  hint2.onUserMove("D", true, cube2);
-  check(hint2.getState() == HintSystem::State::INVALID,
-        "wrong move -> INVALID");
-  hint2.onUserMove("D", false, cube2);
-  check(hint2.getState() == HintSystem::State::INVALID,
-        "moves in INVALID do not revive the list");
+  // 6.6 容错：错误操作 -> DRIFT（偏离量 1，不再立即失效）
+  {
+    // 构造一个确定不等于指针期望操作的"错误操作"（本体坐标）
+    char wf = 'D';
+    bool wc = true;
+    if (hint2.moveFace(0) == 'D')
+      wf = 'U'; // 面不同，必错
+    cube2.rotateViewDirection(std::string(1, wf), wc);
+    hint2.onUserMove(std::string(1, wf), wc, cube2);
+    check(hint2.getState() == HintSystem::State::DRIFT,
+          "wrong move -> DRIFT (not INVALID)");
+    check(hint2.deviation() == 1, "deviation is 1 after first wrong move");
+
+    // 6.6b 回正：按回正指引（最近偏离操作的逆操作）-> 偏离归零恢复 VALID
+    cube2.rotateViewDirection(std::string(1, wf), !wc);
+    hint2.onUserMove(std::string(1, wf), !wc, cube2);
+    check(hint2.getState() == HintSystem::State::VALID,
+          "inverse of drifted move restores VALID");
+    check(hint2.deviation() == 0, "deviation back to 0");
+
+    // 6.6c 退格回正
+    cube2.rotateViewDirection(std::string(1, wf), wc); // 又错一步 -> DRIFT
+    hint2.onUserMove(std::string(1, wf), wc, cube2);
+    check(hint2.getState() == HintSystem::State::DRIFT,
+          "wrong move -> DRIFT again");
+    {
+      char lf = 0;
+      bool lc = false;
+      bool hasLast = cube2.getLastPerformedMove(lf, lc);
+      check(cube2.undo(), "undo in DRIFT succeeds");
+      hint2.onUndo(true, hasLast, lf, lc, cube2);
+    }
+    check(hint2.getState() == HintSystem::State::VALID,
+          "undo in DRIFT restores VALID");
+
+    // 6.6d 偏离量累计与阈值：3 次内仍可挽回，第 4 次彻底失效
+    for (int k = 1; k <= 3; ++k) {
+      cube2.rotateViewDirection(std::string(1, wf), wc);
+      hint2.onUserMove(std::string(1, wf), wc, cube2);
+      check(hint2.getState() == HintSystem::State::DRIFT,
+            "deviation " + std::to_string(k) + " still DRIFT");
+      check(hint2.deviation() == k, "deviation == " + std::to_string(k));
+    }
+    cube2.rotateViewDirection(std::string(1, wf), wc);
+    hint2.onUserMove(std::string(1, wf), wc, cube2);
+    check(hint2.getState() == HintSystem::State::INVALID,
+          "deviation > 3 -> INVALID (permanently)");
+    check(hint2.deviation() == 0, "deviation record cleared at INVALID");
+
+    // 6.6e 彻底失效后不再回正（操作不复活列表）
+    cube2.rotateViewDirection(std::string(1, wf), !wc);
+    hint2.onUserMove(std::string(1, wf), !wc, cube2);
+    check(hint2.getState() == HintSystem::State::INVALID,
+          "moves in INVALID do not revive the list");
+  }
   hint2.onSpace(cube2);
   check(hint2.getState() == HintSystem::State::VALID,
         "space re-solves from INVALID");
 
-  // 6.7 指针已在头部、撤销记录仍可撤回 -> INVALID
-  check(cube2.undo(), "undo succeeds while pointer is at head");
-  hint2.onUndo(true, cube2);
-  check(hint2.getState() == HintSystem::State::INVALID,
-        "undo past head -> INVALID");
+  // 6.7 指针已在头部、撤销记录仍可撤回 -> 进入 DRIFT（可挽回）
+  {
+    char lf = 0;
+    bool lc = false;
+    bool hasLast = cube2.getLastPerformedMove(lf, lc);
+    check(cube2.undo(), "undo succeeds while pointer is at head");
+    hint2.onUndo(true, hasLast, lf, lc, cube2);
+  }
+  check(hint2.getState() == HintSystem::State::DRIFT,
+        "undo past head -> DRIFT (recoverable)");
+  check(hint2.deviation() == 1, "deviation 1 after head undo");
+  check(hint2.pointer() == 0, "pointer stays at head");
+
+  // 6.7b 回归：DRIFT 手动逆操作回正后，undo 栈残留互逆对；
+  //        退格撤销的是残留操作，应进 DRIFT 而不是盲目移动指针
+  {
+    RubiksCube c4;
+    c4.scramble(20);
+    HintSystem h4;
+    h4.toggle();
+    h4.onSpace(c4);
+    check(h4.getState() == HintSystem::State::VALID, "h4 VALID");
+    // 正确执行列表第一步
+    const char f0 = h4.moveFace(0);
+    const bool cw0 = h4.moveClockwise(0);
+    c4.rotateViewDirection(std::string(1, f0), cw0);
+    h4.onUserMove(std::string(1, f0), cw0, c4);
+    const size_t ptr = h4.pointer();
+    check(ptr == 1, "h4 pointer advanced to 1");
+    // 错按一步 -> DRIFT
+    char wf = 'D';
+    if (f0 == 'D')
+      wf = 'U';
+    c4.rotateViewDirection(std::string(1, wf), true);
+    h4.onUserMove(std::string(1, wf), true, c4);
+    check(h4.getState() == HintSystem::State::DRIFT, "h4 DRIFT after wrong move");
+    // 手动逆操作回正 -> VALID（指针不变，undo 栈残留互逆对）
+    c4.rotateViewDirection(std::string(1, wf), false);
+    h4.onUserMove(std::string(1, wf), false, c4);
+    check(h4.getState() == HintSystem::State::VALID,
+          "h4 VALID after manual inverse recovery");
+    check(h4.pointer() == ptr, "h4 pointer unchanged after recovery");
+    // 退格：撤销的是回正残留，应进 DRIFT 而非 pointer--
+    {
+      char lf = 0;
+      bool lc = false;
+      bool hasLast = c4.getLastPerformedMove(lf, lc);
+      check(c4.undo(), "h4 undo succeeds");
+      h4.onUndo(true, hasLast, lf, lc, c4);
+    }
+    check(h4.getState() == HintSystem::State::DRIFT,
+          "h4 undo of drift residue -> DRIFT (not pointer--)");
+    check(h4.pointer() == ptr, "h4 pointer NOT moved by residue undo");
+    check(h4.deviation() == 1, "h4 deviation 1");
+    // 回正指引 = 撤销残留的逆 = (wf, false)；按它回正
+    c4.rotateViewDirection(std::string(1, wf), false);
+    h4.onUserMove(std::string(1, wf), false, c4);
+    check(h4.getState() == HintSystem::State::VALID,
+          "h4 VALID again after following guide");
+    check(h4.pointer() == ptr, "h4 pointer still intact after recovery");
+  }
 
   // 6.8 打乱/重置使有效列表失效
   hint2.onSpace(cube2);
@@ -131,6 +239,22 @@ static void runHintStateTests() {
   hint2.onCubeStateChanged();
   check(hint2.getState() == HintSystem::State::INVALID,
         "scramble/reset invalidates VALID list");
+
+  // 6.8b 打乱/重置也使偏离中的列表彻底失效
+  cube2.scramble(20);
+  hint2.onSpace(cube2);
+  check(hint2.getState() == HintSystem::State::VALID, "solved after re-scramble");
+  {
+    char wf = 'D';
+    if (hint2.moveFace(0) == 'D')
+      wf = 'U';
+    cube2.rotateViewDirection(std::string(1, wf), true);
+    hint2.onUserMove(std::string(1, wf), true, cube2);
+    check(hint2.getState() == HintSystem::State::DRIFT, "DRIFT again");
+  }
+  hint2.onCubeStateChanged();
+  check(hint2.getState() == HintSystem::State::INVALID,
+        "scramble/reset invalidates DRIFT list");
 
   // 6.9 按提示走完整个列表 -> FINISH 且列表清空、魔方还原
   RubiksCube cube3;

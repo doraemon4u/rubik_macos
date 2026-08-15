@@ -256,6 +256,15 @@ public:
   bool undo();
 
   /**
+   * @brief 获取用户最近执行的面旋转操作（本体坐标）
+   * @param face 输出面字母（'F','B','L','R','U','D'）
+   * @param cw 输出是否顺时针
+   * @return 历史为空时返回 false，否则 true
+   * @note 用于提示系统判断退格/逆操作的回正语义
+   */
+  bool getLastPerformedMove(char &face, bool &cw) const;
+
+  /**
    * @brief 导出当前魔方状态的 54 贴纸 facelet 字符串（min2phase 输入格式）
    * @details 按 U1..U9, R1..R9, F1..F9, D1..D9, L1..L9, B1..B9 的固定顺序
    *          收集每个贴纸颜色，并映射为面符号（白->U、黄->D、红->B、

@@ -246,8 +246,11 @@ int main() {
         cube.rotateViewDirection("D", false);
         hint.onUserMove("D", false, cube);
       } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
+        char lastFace = 0;
+        bool lastCw = false;
+        bool hasLast = cube.getLastPerformedMove(lastFace, lastCw);
         bool ok = cube.undo();
-        hint.onUndo(ok, cube);
+        hint.onUndo(ok, hasLast, lastFace, lastCw, cube);
       }
 
       int width, height;
