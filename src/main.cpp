@@ -52,6 +52,8 @@ void printInstructions() {
   std::cout << "  +/-        - Zoom in/out" << std::endl;
   std::cout << "  C          - Reset cube" << std::endl;
   std::cout << "  X          - Scramble cube" << std::endl;
+  std::cout << "  H          - Toggle hint system" << std::endl;
+  std::cout << "  SPACE      - Solve & show hints" << std::endl;
   std::cout << "  ESC        - Exit" << std::endl;
   std::cout << std::endl;
   std::cout << "Rotate faces (based on current view):" << std::endl;
