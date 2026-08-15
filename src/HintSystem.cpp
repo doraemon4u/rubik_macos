@@ -20,13 +20,14 @@ void HintSystem::ensureColors() {
 
   init_pair(PAIR_CYAN, COLOR_CYAN, COLOR_BLACK); // 中括号
   init256(PAIR_GREY, RGB(140, 140, 140));        // 灰色
-  init256(PAIR_BLOOD, RGB(204, 20, 20));         // 血红色（星号）
-  init256(PAIR_RED, RGB(176, 96, 96));           // 低饱和红（Back/Invalid）
-  init256(PAIR_ORANGE, RGB(255, 135, 0));        // Front
-  init256(PAIR_BLUE, RGB(60, 120, 255));         // Left
-  init256(PAIR_GREEN, RGB(0, 200, 0));           // Right / Finish / Deviation
-  init256(PAIR_WHITE, RGB(235, 235, 235));       // Up
-  init256(PAIR_YELLOW, RGB(235, 235, 0));        // Down
+  init256(PAIR_BLOOD, RGB(204, 20, 20));         // 血红色
+  const std::vector<RGB> &crgb = RubiksCube::getColorRGB();
+  init256(PAIR_RED, crgb[_COLOR_RED]);       // Red 面名 / Invalid
+  init256(PAIR_ORANGE, crgb[_COLOR_ORANGE]); // Orange 面名
+  init256(PAIR_BLUE, crgb[_COLOR_BLUE]);     // Blue 面名
+  init256(PAIR_GREEN, crgb[_COLOR_GREEN]);   // Green 面名 / Finish / Deviation
+  init256(PAIR_WHITE, crgb[_COLOR_WHITE]);   // White 面名
+  init256(PAIR_YELLOW, crgb[_COLOR_YELLOW]); // Yellow 面名
 }
 
 int HintSystem::faceColorPair(char face) {
@@ -261,8 +262,9 @@ void HintSystem::drawSolvingMessage(WINDOW *win) {
 }
 
 void HintSystem::drawMoveRow(WINDOW *win, int yrow, int x0, char viewDir,
-                             bool cw, const std::string &numStr, int numW,
-                             int maxOpLen, bool done, bool current) const {
+                             char cubeFace, bool cw, const std::string &numStr,
+                             int numW, int maxOpLen, bool done,
+                             bool current) const {
   auto viewName = [](char v) -> const char * {
     switch (v) {
     case 'F':
@@ -322,7 +324,7 @@ void HintSystem::drawMoveRow(WINDOW *win, int yrow, int x0, char viewDir,
   mvwaddch(win, yrow, col++, ' ');
 
   const char *name = viewName(viewDir);
-  const int pair = faceColorPair(viewDir);
+  const int pair = faceColorPair(cubeFace);
   if (done)
     wattron(win, COLOR_PAIR(PAIR_GREY));
   else
@@ -395,7 +397,8 @@ void HintSystem::draw(WINDOW *win, int width, int height,
       }
       auto it = faceToView.find(guide.face);
       const char viewDir = it != faceToView.end() ? it->second : guide.face;
-      drawMoveRow(win, y0 + 2, x0, viewDir, guide.cw, "0", 1, 12, false, true);
+      drawMoveRow(win, y0 + 2, x0, viewDir, guide.face, guide.cw, "0", 1, 12,
+                  false, true);
     }
     return;
   }
@@ -435,7 +438,7 @@ void HintSystem::draw(WINDOW *win, int width, int height,
     const bool current = i == static_cast<int>(pointer_);
     auto it = faceToView.find(mv.face);
     const char viewDir = it != faceToView.end() ? it->second : mv.face;
-    drawMoveRow(win, yrow, x0, viewDir, mv.cw, std::to_string(i), numW,
+    drawMoveRow(win, yrow, x0, viewDir, mv.face, mv.cw, std::to_string(i), numW,
                 maxOpLen, done, current);
   }
 }

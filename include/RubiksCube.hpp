@@ -288,6 +288,11 @@ public:
   Color getFaceColor(const std::string &face) const;
 
   /**
+   * @brief 获取面颜色 RGB 表（按 Color 枚举下标索引，与渲染共用同一套配色）
+   */
+  static const std::vector<RGB> &getColorRGB() { return COLOR_RGB; }
+
+  /**
    * @brief 检查是否需要重绘
    */
   bool needsRedraw() const { return dirty || animating; }

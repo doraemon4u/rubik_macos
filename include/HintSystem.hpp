@@ -113,13 +113,17 @@ private:
   /** 惰性初始化颜色对（start_color 之后调用一次） */
   static void ensureColors();
 
-  /** 面名对应的颜色对 */
+  /** 面名对应的颜色对（按本体面，与 FACE_TO_COLOR 一致） */
   static int faceColorPair(char face);
 
-  /** 渲染一行操作（列表行 / 回正指引行共用，含编号/星号/面名/指针括号） */
-  void drawMoveRow(WINDOW *win, int yrow, int x0, char viewDir, bool cw,
-                   const std::string &numStr, int numW, int maxOpLen, bool done,
-                   bool current) const;
+  /**
+   * @brief 渲染一行操作（列表行 / 回正指引行共用，含编号/星号/面名/指针括号）
+   * @param viewDir 显示的视图方向字母（决定名字，随视角变化）
+   * @param cubeFace 操作对应的本体面字母（决定颜色，与右上角取色一致）
+   */
+  void drawMoveRow(WINDOW *win, int yrow, int x0, char viewDir, char cubeFace,
+                   bool cw, const std::string &numStr, int numW, int maxOpLen,
+                   bool done, bool current) const;
 
   /** 解析 min2phase 解算输出（"U  R  U' F2" 格式，180° 展开为两步） */
   static bool parseSolution(const std::string &sol, std::vector<Move> &out);
