@@ -12,7 +12,6 @@
 #endif
 
 #include <cmath>
-#include <functional>
 #include <random>
 #include <string>
 #include <unordered_map>
@@ -219,43 +218,15 @@ void RubiksCube::completeAnimation() {
 
 std::vector<std::shared_ptr<RubiksCubePiece>>
 RubiksCube::getPiecesOnFace(const std::string &faceChar) {
-  std::function<bool(const Vector3 &)> positionCheck;
-
-  if (faceChar == "F") {
-    positionCheck = [](const Vector3 &pos) {
-      return std::abs(pos.z + 1) < 0.1f;
-    };
-  } else if (faceChar == "B") {
-    positionCheck = [](const Vector3 &pos) {
-      return std::abs(pos.z - 1) < 0.1f;
-    };
-  } else if (faceChar == "L") {
-    positionCheck = [](const Vector3 &pos) {
-      return std::abs(pos.x + 1) < 0.1f;
-    };
-  } else if (faceChar == "R") {
-    positionCheck = [](const Vector3 &pos) {
-      return std::abs(pos.x - 1) < 0.1f;
-    };
-  } else if (faceChar == "U") {
-    positionCheck = [](const Vector3 &pos) {
-      return std::abs(pos.y - 1) < 0.1f;
-    };
-  } else if (faceChar == "D") {
-    positionCheck = [](const Vector3 &pos) {
-      return std::abs(pos.y + 1) < 0.1f;
-    };
-  } else {
+  auto it = ROTATION_AXES.find(faceChar);
+  if (it == ROTATION_AXES.end())
     return {};
-  }
 
   std::vector<std::shared_ptr<RubiksCubePiece>> result;
   for (const auto &piece : pieces) {
-    if (positionCheck(getPiecePosition(piece))) {
+    if (it->second.dot(getPiecePosition(piece)) > 0.5f)
       result.push_back(piece);
-    }
   }
-
   return result;
 }
 
@@ -700,8 +671,6 @@ void RubiksCube::drawUI(WINDOW *win, int width, int height,
     mvwprintw(win, 0, (width - title.length()) / 2, "%s", title.c_str());
   }
 
-  updateViewMapping();
-
   auto getFaceColorIndex = [this](const std::string &face) -> int {
     try {
       auto viewIt = viewMapping.find(face);
@@ -847,7 +816,8 @@ void RubiksCube::drawUI(WINDOW *win, int width, int height,
     }
   }
 
-  std::string footer = "Press ESC to exit | C to reset | X to scramble";
+  std::string footer =
+      "Press ESC to exit | C to reset | X to scramble | = to auto-solve";
   if (width >= static_cast<int>(footer.length())) {
     wattron(win, A_REVERSE);
     mvwprintw(win, height - 1, (width - footer.length()) / 2, "%s",
