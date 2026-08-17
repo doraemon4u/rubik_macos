@@ -2,14 +2,30 @@
 #include <map>
 #include <sstream>
 
-static const std::map<std::string, Vector3> FACE_NORMALS = {
-    {"F", Vector3(0, 0, 1)},  {"B", Vector3(0, 0, -1)},
-    {"L", Vector3(-1, 0, 0)}, {"R", Vector3(1, 0, 0)},
-    {"U", Vector3(0, 1, 0)},  {"D", Vector3(0, -1, 0)}};
+// 面字母 -> initialColors 下标（F,B,L,R,U,D）
+static int faceColorIndex(char face) {
+  switch (face) {
+  case 'F':
+    return 0;
+  case 'B':
+    return 1;
+  case 'L':
+    return 2;
+  case 'R':
+    return 3;
+  case 'U':
+    return 4;
+  case 'D':
+    return 5;
+  default:
+    return -1;
+  }
+}
 
 RubiksCubePiece::RubiksCubePiece(const Vector3 &position, PieceType type)
     : initialPosition(position), currentPosition(position), pieceType(type),
       localRotation(1, 0, 0, 0) {
+  initialColors.fill(_COLOR_NONE);
   initColors();
 }
 
@@ -20,34 +36,34 @@ void RubiksCubePiece::initColors() {
 
   if (pieceType == PIECE_CENTER) {
     if (x == -1.0f)
-      initialColors["L"] = static_cast<Color>(_COLOR_BLUE);
+      initialColors[2] = static_cast<Color>(_COLOR_BLUE); // L
     else if (x == 1.0f)
-      initialColors["R"] = static_cast<Color>(_COLOR_GREEN);
+      initialColors[3] = static_cast<Color>(_COLOR_GREEN); // R
     else if (y == -1.0f)
-      initialColors["D"] = static_cast<Color>(_COLOR_YELLOW);
+      initialColors[5] = static_cast<Color>(_COLOR_YELLOW); // D
     else if (y == 1.0f)
-      initialColors["U"] = static_cast<Color>(_COLOR_WHITE);
+      initialColors[4] = static_cast<Color>(_COLOR_WHITE); // U
     else if (z == -1.0f)
-      initialColors["B"] = static_cast<Color>(_COLOR_ORANGE);
+      initialColors[1] = static_cast<Color>(_COLOR_ORANGE); // B
     else if (z == 1.0f)
-      initialColors["F"] = static_cast<Color>(_COLOR_RED);
+      initialColors[0] = static_cast<Color>(_COLOR_RED); // F
     return;
   }
 
   if (x == -1.0f)
-    initialColors["L"] = static_cast<Color>(_COLOR_BLUE);
+    initialColors[2] = static_cast<Color>(_COLOR_BLUE); // L
   else if (x == 1.0f)
-    initialColors["R"] = static_cast<Color>(_COLOR_GREEN);
+    initialColors[3] = static_cast<Color>(_COLOR_GREEN); // R
 
   if (y == -1.0f)
-    initialColors["D"] = static_cast<Color>(_COLOR_YELLOW);
+    initialColors[5] = static_cast<Color>(_COLOR_YELLOW); // D
   else if (y == 1.0f)
-    initialColors["U"] = static_cast<Color>(_COLOR_WHITE);
+    initialColors[4] = static_cast<Color>(_COLOR_WHITE); // U
 
   if (z == -1.0f)
-    initialColors["B"] = static_cast<Color>(_COLOR_ORANGE);
+    initialColors[1] = static_cast<Color>(_COLOR_ORANGE); // B
   else if (z == 1.0f)
-    initialColors["F"] = static_cast<Color>(_COLOR_RED);
+    initialColors[0] = static_cast<Color>(_COLOR_RED); // F
 }
 
 void RubiksCubePiece::rotate(const Vector3 &axis, float angle) {
@@ -108,11 +124,8 @@ RubiksCubePiece::getFaceCorners(const std::string &faceName) const {
 }
 
 Color RubiksCubePiece::getCurrentFaceColor(const std::string &faceName) const {
-  auto it = initialColors.find(faceName);
-  if (it != initialColors.end()) {
-    return it->second;
-  }
-  return _COLOR_NONE;
+  int idx = faceColorIndex(faceName.empty() ? '\0' : faceName[0]);
+  return idx >= 0 ? initialColors[idx] : _COLOR_NONE;
 }
 
 void RubiksCubePiece::reset() {
