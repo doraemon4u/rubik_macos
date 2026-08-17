@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =====================================================
 #  Rubik's Cube — 跨平台构建脚本
-#  自动检测 Windows (MSYS2) / Linux，检查依赖，完成编译
+#  自动检测 Windows (MSYS2) / Linux / macOS，检查依赖，完成编译
 # =====================================================
 set -e
 
@@ -19,6 +19,8 @@ err()   { echo -e "${RED}[ERROR]${NC} $*"; }
 header(){ echo; echo -e "${GREEN}============================================${NC}"; echo -e "${GREEN}  $*${NC}"; echo -e "${GREEN}============================================${NC}"; echo; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VERSION="1.0.0"
+DIST_DIR="$SCRIPT_DIR/dist"
 
 # =====================================================
 #  第 1 步：检测操作系统
@@ -63,9 +65,16 @@ detect_os() {
             GENERATOR="Unix Makefiles"
             info "检测到 Linux"
             ;;
+        Darwin)
+            OS="macos"
+            BUILD_DIR="$SCRIPT_DIR/build_macos"
+            EXECUTABLE="$BUILD_DIR/rubik"
+            GENERATOR="Unix Makefiles"
+            info "检测到 macOS"
+            ;;
         *)
             err "不支持的操作系统: $(uname -s)"
-            err "当前仅支持 Windows (MSYS2) 和 Linux。"
+            err "当前仅支持 Windows (MSYS2)、Linux 和 macOS。"
             exit 1
             ;;
     esac
@@ -233,8 +242,59 @@ check_linux_deps() {
     ok "Linux 依赖检查通过"
 }
 
+check_macos_deps() {
+    local missing=()
+
+    # 编译器：优先使用 Xcode Command Line Tools 自带的原生 clang++
+    if [ -x /usr/bin/clang++ ]; then
+        export CC=/usr/bin/clang
+        export CXX=/usr/bin/clang++
+        ok "使用原生 Command Line Tools clang++"
+    elif command -v clang++ &>/dev/null; then
+        export CC=clang
+        export CXX=clang++
+        ok "使用 clang++ 作为编译器"
+    else
+        missing+=("clang++ (Xcode Command Line Tools)")
+    fi
+
+    # cmake：Command Line Tools 不自带，需通过 Homebrew 安装
+    if ! command -v cmake &>/dev/null; then
+        missing+=("cmake (brew install cmake)")
+    fi
+
+    # make：Command Line Tools 自带
+    if ! command -v make &>/dev/null; then
+        missing+=("make (Xcode Command Line Tools)")
+    fi
+
+    # ncurses：随 macOS SDK 提供，检查 SDK 头文件即可
+    local sdk_path
+    sdk_path="$(xcrun --show-sdk-path 2>/dev/null || true)"
+    if [ -z "$sdk_path" ] || [ ! -f "$sdk_path/usr/include/curses.h" ]; then
+        missing+=("ncurses 开发库（需安装 Xcode Command Line Tools）")
+    fi
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        err "以下依赖未安装："
+        for m in "${missing[@]}"; do
+            warn "  - $m"
+        done
+        echo
+        err "macOS 安装指引："
+        echo "  1. 安装 Xcode Command Line Tools:  xcode-select --install"
+        echo "  2. 安装 cmake:                      brew install cmake"
+        echo
+        exit 1
+    fi
+
+    ok "macOS 依赖检查通过"
+}
+
 if [ "$OS" = "windows" ]; then
     check_windows_deps
+elif [ "$OS" = "macos" ]; then
+    check_macos_deps
 else
     check_linux_deps
 fi
@@ -288,17 +348,67 @@ if [ "$OS" = "windows" ]; then
 fi
 
 # =====================================================
+#  第 5 步：打包
+#   Windows: zip（exe + 运行时 DLL）   Linux: cpack → .deb   macOS: hdiutil → .dmg
+# =====================================================
+header "第 5 步：打包"
+
+mkdir -p "$DIST_DIR"
+
+if [ "$OS" = "windows" ]; then
+    PKG_NAME="rubik-${VERSION}-win64.zip"
+    PKG_PATH="$DIST_DIR/$PKG_NAME"
+    if command -v zip &>/dev/null; then
+        (cd "$BUILD_DIR" && zip -qr "$PKG_PATH" rubik.exe rubik_autosolve.exe rubik_selftest.exe *.dll)
+    else
+        # 兜底：PowerShell 压缩（MSYS2 未装 zip 时）
+        WIN_BUILD="$(cygpath -w "$BUILD_DIR")"
+        WIN_PKG="$(cygpath -w "$PKG_PATH")"
+        powershell -NoProfile -Command "Compress-Archive -Path '${WIN_BUILD}\\*' -DestinationPath '${WIN_PKG}' -Force"
+    fi
+    if [ -f "$PKG_PATH" ]; then
+        ok "打包完成 → $PKG_PATH"
+    else
+        warn "Windows 打包失败（需要 zip 或 PowerShell）"
+    fi
+elif [ "$OS" = "linux" ]; then
+    if command -v dpkg-deb &>/dev/null; then
+        # deb 约定安装到 /usr/bin，重配前缀后由 cpack 生成 .deb
+        cmake -S "$SCRIPT_DIR" -B "$BUILD_DIR" -G "$GENERATOR" \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+        cpack -G DEB --config "$BUILD_DIR/CPackConfig.cmake" -B "$BUILD_DIR"
+        if mv "$BUILD_DIR"/*.deb "$DIST_DIR/" 2>/dev/null; then
+            ok "打包完成 → $(ls "$DIST_DIR"/*.deb)"
+        else
+            warn "cpack 未产出 .deb 文件"
+        fi
+    else
+        warn "未找到 dpkg-deb，跳过 .deb 打包（Ubuntu/Debian 需安装 dpkg）"
+    fi
+else
+    # macOS: 拖放式 dmg（CLI 工具通用做法）
+    STAGE="$DIST_DIR/dmg-stage"
+    rm -rf "$STAGE"
+    mkdir -p "$STAGE"
+    cp "$BUILD_DIR/rubik" "$BUILD_DIR/rubik_autosolve" "$SCRIPT_DIR/README.md" "$STAGE/"
+    hdiutil create -volname Rubik -srcfolder "$STAGE" -ov -format UDZO \
+        "$DIST_DIR/rubik-${VERSION}-macos.dmg"
+    rm -rf "$STAGE"
+    ok "打包完成 → $DIST_DIR/rubik-${VERSION}-macos.dmg"
+fi
+
+# =====================================================
 #  完成
 # =====================================================
 header "编译成功！"
 
-echo "  平台:       $([ "$OS" = "windows" ] && echo "Windows (MSYS2 $FLAVOR)" || echo "Linux")"
+echo "  平台:       $([ "$OS" = "windows" ] && echo "Windows (MSYS2 $FLAVOR)" || [ "$OS" = "macos" ] && echo "macOS" || echo "Linux")"
 echo "  构建目录:   $BUILD_DIR"
 echo "  可执行文件: $EXECUTABLE"
 echo
 if [ "$OS" = "windows" ]; then
     echo "运行: cd build_win && ./rubik.exe"
 else
-    echo "运行: cd build_linux && ./rubik"
+    echo "运行: cd build_$OS && ./rubik"
 fi
 echo

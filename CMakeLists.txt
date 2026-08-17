@@ -4,6 +4,9 @@ project(rubik)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# 导出 compile_commands.json，供 clangd / C/C++ 扩展的 IntelliSense 使用（仅影响本构建目录）
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 if(WIN32)
     # Windows: 查找 PDCurses（MSYS2 安装路径）
     # 优先从环境变量 PDCURSES_DIR 查找，也支持 MSYS2 默认路径
@@ -114,6 +117,28 @@ target_include_directories(rubik PRIVATE
 target_link_libraries(rubik ${CURSES_LIBRARIES} min2phase)
 
 # ----------------------------------------------------------------------------
+# 一键自动求解程序：打乱后逐步还原（rubik_autosolve）
+# 用法：rubik_autosolve [scramble_moves=20] [delay_ms=1000]
+# ----------------------------------------------------------------------------
+add_executable(rubik_autosolve
+    src/autosolve.cpp
+    src/Vector3.cpp
+    src/Quaternion.cpp
+    src/ColorConverter.cpp
+    src/RubiksCubePiece.cpp
+    src/RubiksCube.cpp
+)
+
+target_include_directories(rubik_autosolve PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CURSES_INCLUDE_DIR}
+    ${ADDITIONAL_INCLUDE_DIRS}
+)
+
+target_link_libraries(rubik_autosolve ${CURSES_LIBRARIES} min2phase)
+
+# ----------------------------------------------------------------------------
 # 自测程序：验证 facelet 导出与解算闭环（rubik_selftest）
 # ----------------------------------------------------------------------------
 add_executable(rubik_selftest
@@ -139,3 +164,21 @@ target_link_libraries(rubik_selftest ${CURSES_LIBRARIES} min2phase)
 if(WIN32)
     target_link_libraries(rubik gdi32 comdlg32 winmm)
 endif()
+
+# ----------------------------------------------------------------------------
+# 安装规则 + 打包（CPack）
+#   Linux:  cpack -G DEB  → rubik_1.0.0_amd64.deb
+#   Windows: 打包由 build.sh 用 zip / PowerShell 完成（exe + 运行时 DLL）
+#   macOS:   打包由 build.sh 用 hdiutil 完成（拖放式 dmg）
+# ----------------------------------------------------------------------------
+install(TARGETS rubik rubik_autosolve RUNTIME DESTINATION bin)
+install(FILES README.md DESTINATION share/doc/rubik)
+
+set(CPACK_PACKAGE_NAME "rubik")
+set(CPACK_PACKAGE_VERSION "1.0.0")
+set(CPACK_PACKAGE_VENDOR "Rubik Developers")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "3D Rubik's Cube simulator for the terminal")
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Rubik Developers <noreply@example.com>")
+# 用 | 兼容新旧发行版（Debian 10/Ubuntu 20.04+ 为 libncurses6，更早为 libncurses5）
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "libncurses5 | libncurses6")
+include(CPack)

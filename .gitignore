@@ -1,3 +1,8 @@
 build_win
 build_linux
+build_macos
+build/
+dist/
+compile_commands.json
 .vscode
+.omo
