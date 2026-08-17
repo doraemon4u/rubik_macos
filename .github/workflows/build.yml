@@ -14,10 +14,13 @@ jobs:
         include:
           - os: ubuntu-latest
             name: Linux
+            shell: bash
           - os: macos-latest
             name: macOS
+            shell: bash
           - os: windows-latest
             name: Windows
+            shell: msys2 {0}
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -41,7 +44,7 @@ jobs:
             zip
 
       - name: Build & package
-        shell: bash
+        shell: ${{ matrix.shell }}
         run: bash build.sh
 
       - name: Upload packages
