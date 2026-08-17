@@ -1,7 +1,11 @@
 #include "HintSystem.hpp"
 #include "RubiksCube.hpp"
+#include <chrono>
 #include <iostream>
+#include <map>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 #ifdef _WIN32
 #define PDC_NCMOUSE
@@ -40,6 +44,12 @@ struct WinMouseDrag {
 #include <curses.h>
 #endif
 
+// macOS SDK ncurses 为 NCURSES_MOUSE_VERSION 1，只定义到 BUTTON4；
+// 按 v1 掩码布局（(b-1)*6 位移）补齐 BUTTON5_PRESSED 以便编译。Linux 自带定义，不触发。
+#ifndef BUTTON5_PRESSED
+#define BUTTON5_PRESSED (2L << 24)
+#endif
+
 void printInstructions() {
   std::cout << "======================================" << std::endl;
   std::cout << "      3x3 Rubik's Cube Simulator      " << std::endl;
@@ -54,6 +64,7 @@ void printInstructions() {
   std::cout << "  X          - Scramble cube" << std::endl;
   std::cout << "  H          - Toggle hint system" << std::endl;
   std::cout << "  SPACE      - Solve & show hints" << std::endl;
+  std::cout << "  =          - Auto-solve current state" << std::endl;
   std::cout << "  ESC        - Exit" << std::endl;
   std::cout << std::endl;
   std::cout << "Rotate faces (based on current view):" << std::endl;
@@ -116,6 +127,21 @@ int main() {
   HintSystem hint;
   std::unordered_map<int, int> colorCache;
   colorCache.reserve(64);
+
+  std::vector<HintSystem::Move> autoMoves;
+  size_t autoIndex = 0;
+  bool autoSolving = false;
+  std::chrono::steady_clock::time_point autoNextMoveAt;
+  std::string autoStatus;
+  std::chrono::steady_clock::time_point autoStatusUntil;
+
+  auto drawAutoStatus = [&]() {
+    if (autoSolving) {
+      mvprintw(1, 1, "Auto-solving... %zu/%zu", autoIndex, autoMoves.size());
+    } else if (std::chrono::steady_clock::now() < autoStatusUntil) {
+      mvprintw(1, 1, "%-30s", autoStatus.c_str());
+    }
+  };
 #ifdef _WIN32
   WinMouseDrag mouseDrag;
 #endif
@@ -124,30 +150,58 @@ int main() {
     while (true) {
       int ch = getch();
 
-#ifdef _WIN32
-      mouseDrag.poll(cube);
-      if (ch == KEY_MOUSE) {
-        MEVENT event;
-        if (getmouse(&event) == OK) {
-          if (event.bstate & BUTTON4_PRESSED) {
-            cube.zoom(3);
-          } else if (event.bstate & BUTTON5_PRESSED) {
-            cube.zoom(-3);
+      auto now = std::chrono::steady_clock::now();
+      if (autoSolving) {
+        if (!cube.needsRedraw() && now >= autoNextMoveAt) {
+          if (autoIndex < autoMoves.size()) {
+            const HintSystem::Move &m = autoMoves[autoIndex];
+            std::map<char, char> faceToView;
+            for (const auto &kv : cube.getViewMapping())
+              faceToView[kv.second[0]] = kv.first[0];
+            auto it = faceToView.find(m.face);
+            const char viewDir = it != faceToView.end() ? it->second : m.face;
+            cube.rotateViewDirection(std::string(1, viewDir), m.cw);
+            ++autoIndex;
+            autoNextMoveAt = now + std::chrono::milliseconds(1000);
+          } else {
+            autoSolving = false;
+            autoStatus =
+                "Solved! (" + std::to_string(autoMoves.size()) + " moves)";
+            autoStatusUntil = now + std::chrono::seconds(3);
           }
         }
-        int w, h;
-        getmaxyx(stdscr, h, w);
-        if (w >= 80 && h >= 40) {
-          cube.draw(stdscr, w, h, colorCache);
-          hint.draw(stdscr, w, h, cube);
-          refresh();
-        }
-        continue;
       }
-#else
+
+#ifdef _WIN32
+      mouseDrag.poll(cube);
+#endif
       if (ch == KEY_MOUSE) {
-        static int prev_x = -1, prev_y = -1;
-        static bool dragging = false;
+#ifndef _WIN32
+        {
+          static int prev_x = -1, prev_y = -1;
+          static bool dragging = false;
+
+          MEVENT event;
+          if (getmouse(&event) == OK) {
+            if (event.bstate & BUTTON1_PRESSED) {
+              dragging = true;
+              prev_x = event.x;
+              prev_y = event.y;
+            } else if (event.bstate & BUTTON1_RELEASED) {
+              dragging = false;
+            } else if (dragging && (event.bstate & REPORT_MOUSE_POSITION)) {
+              int dx = event.x - prev_x;
+              int dy = event.y - prev_y;
+              if (dx != 0 || dy != 0) {
+                cube.rotateByMouseDelta(static_cast<float>(4 * dx),
+                                        static_cast<float>(8 * dy));
+                prev_x = event.x;
+                prev_y = event.y;
+              }
+            }
+          }
+        }
+#endif
 
         MEVENT event;
         if (getmouse(&event) == OK) {
@@ -155,21 +209,6 @@ int main() {
             cube.zoom(3);
           } else if (event.bstate & BUTTON5_PRESSED) {
             cube.zoom(-3);
-          } else if (event.bstate & BUTTON1_PRESSED) {
-            dragging = true;
-            prev_x = event.x;
-            prev_y = event.y;
-          } else if (event.bstate & BUTTON1_RELEASED) {
-            dragging = false;
-          } else if (dragging && (event.bstate & REPORT_MOUSE_POSITION)) {
-            int dx = event.x - prev_x;
-            int dy = event.y - prev_y;
-            if (dx != 0 || dy != 0) {
-              cube.rotateByMouseDelta(static_cast<float>(4 * dx),
-                                      static_cast<float>(8 * dy));
-              prev_x = event.x;
-              prev_y = event.y;
-            }
           }
         }
         int width, height;
@@ -177,14 +216,22 @@ int main() {
         if (width >= 80 && height >= 40) {
           cube.draw(stdscr, width, height, colorCache);
           hint.draw(stdscr, width, height, cube);
+          drawAutoStatus();
           refresh();
         }
         continue;
       }
-#endif
 
-      if (ch == 27 || ch == 'q') {
+      if (ch == 27) {
         break;
+      } else if (ch == 'q') {
+        if (autoSolving) {
+          autoSolving = false;
+          autoStatus = "Auto-solve aborted";
+          autoStatusUntil = now + std::chrono::seconds(2);
+        } else {
+          break;
+        }
       } else if (ch == 'h' || ch == 'H') {
         hint.toggle();
       } else if (ch == ' ') {
@@ -207,8 +254,29 @@ int main() {
         cube.rotateByMouseDelta(-10, 0);
       } else if (ch == KEY_RIGHT) {
         cube.rotateByMouseDelta(10, 0);
-      } else if (ch == '+' || ch == '=') {
+      } else if (ch == '+') {
         cube.zoom(1);
+      } else if (ch == '=') {
+        if (!autoSolving) {
+          mvprintw(1, 1, "Solving...");
+          refresh();
+          std::vector<HintSystem::Move> moves;
+          if (hint.solveCurrentState(cube, moves)) {
+            if (moves.empty()) {
+              autoStatus = "Already solved!";
+              autoStatusUntil = now + std::chrono::seconds(2);
+            } else {
+              autoMoves = moves;
+              autoIndex = 0;
+              autoNextMoveAt = now;
+              autoSolving = true;
+              hint.onCubeStateChanged();
+            }
+          } else {
+            autoStatus = "Solver error - try again";
+            autoStatusUntil = now + std::chrono::seconds(2);
+          }
+        }
       } else if (ch == '-' || ch == '_') {
         cube.zoom(-1);
       } else if (ch == 'f') {
@@ -260,6 +328,7 @@ int main() {
       if (width >= 80 && height >= 40) {
         cube.draw(stdscr, width, height, colorCache);
         hint.draw(stdscr, width, height, cube);
+        drawAutoStatus();
         refresh();
       } else {
         clear();

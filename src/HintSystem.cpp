@@ -110,6 +110,12 @@ bool HintSystem::parseSolution(const std::string &sol, std::vector<Move> &out) {
   return true;
 }
 
+bool HintSystem::solveCurrentState(RubiksCube &cube, std::vector<Move> &out) {
+  std::string facelets = cube.getFaceletString();
+  std::string sol = solveCube(facelets);
+  return parseSolution(sol, out);
+}
+
 void HintSystem::invalidate() {
   state_ = State::INVALID;
   deviation_ = 0;

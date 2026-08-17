@@ -55,6 +55,24 @@ public:
   char moveFace(size_t i) const { return moves_[i].face; }
   bool moveClockwise(size_t i) const { return moves_[i].cw; }
 
+  /** 一次旋转操作（本体坐标，与提示列表共用） */
+  struct Move {
+    char face; ///< 本体面：F B L R U D
+    bool cw;   ///< 是否顺时针
+    bool operator==(const Move &o) const {
+      return face == o.face && cw == o.cw;
+    }
+  };
+
+  /**
+   * @brief 求解当前魔方状态，返回本体坐标下的操作序列（180° 已展开为两步）
+   * @param cube 当前魔方（读取其 facelet 状态）
+   * @param out  输出的操作序列；解算失败时内容不变
+   * @return true 表示成功（out 可能为空 = 已还原），false 表示解算失败
+   * @note 与提示系统开关状态无关，供自动求解（= 键）复用同一套求解器
+   */
+  bool solveCurrentState(RubiksCube &cube, std::vector<Move> &out);
+
   /** H 键：开关面板（状态保留） */
   void toggle();
 
@@ -83,15 +101,6 @@ public:
   void draw(WINDOW *win, int width, int height, const RubiksCube &cube);
 
 private:
-  /** 一次旋转操作（本体坐标） */
-  struct Move {
-    char face; ///< 本体面：F B L R U D
-    bool cw;   ///< 是否顺时针
-    bool operator==(const Move &o) const {
-      return face == o.face && cw == o.cw;
-    }
-  };
-
   static Move inverse(const Move &m) { return Move{m.face, !m.cw}; }
 
   /** 彻底失效：清空偏离记录，仅保留英文提示 */
