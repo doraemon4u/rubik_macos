@@ -14,13 +14,10 @@ jobs:
         include:
           - os: ubuntu-latest
             name: Linux
-            shell: bash
           - os: macos-latest
             name: macOS
-            shell: bash
           - os: windows-latest
             name: Windows
-            shell: msys2 {0}
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -43,8 +40,14 @@ jobs:
             mingw-w64-ucrt-x86_64-pdcurses
             zip
 
+      - name: Build & package (MSYS2)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: bash build.sh
+
       - name: Build & package
-        shell: ${{ matrix.shell }}
+        if: runner.os != 'Windows'
+        shell: bash
         run: bash build.sh
 
       - name: Upload packages
